@@ -1,4 +1,6 @@
 import os
+import sys
+import io
 import logging
 import warnings
 
@@ -12,6 +14,15 @@ warnings.filterwarnings("ignore")
 import argparse
 import json
 import whisperx
+
+def suppress_stdout(func, *args, **kwargs):
+    """Exécute la fonction en supprimant temporairement la sortie standard."""
+    old_stdout = sys.stdout
+    sys.stdout = io.StringIO()
+    try:
+        return func(*args, **kwargs)
+    finally:
+        sys.stdout = old_stdout
 
 def seconds_to_srt_time(seconds: float) -> str:
     hours = int(seconds // 3600)
@@ -76,83 +87,85 @@ def main():
         ext = {"json": ".json", "txt": ".txt", "srt": ".srt"}[args.output_format.lower()]
         args.output = os.path.join(os.path.dirname(args.audio_file), base + ext)
 
-    # Affichage des paramètres utilisés
+    # Affichage minimal des paramètres utilisés
     print(">> Paramètres utilisés :")
-    print(f"   - audio_file      : {args.audio_file}")
+    print(f"   - audio_file     : {args.audio_file}")
     for key in default_values:
         val = getattr(args, key)
         if val == default_values[key]:
             print(f"   - {key:<15}: {val} (default)")
         else:
             print(f"   - {key:<15}: {val} (overridden)")
-    if args.output_format == default_values["output_format"]:
-        print(f"   - output_format   : {args.output_format} (default)")
-    else:
-        print(f"   - output_format   : {args.output_format} (overridden)")
-    print(f"   - output          : {args.output} (default if not specified)")
+    print(f"   - output_format  : {args.output_format} (default)" if args.output_format == default_values["output_format"]
+          else f"   - output_format  : {args.output_format} (overridden)")
+    print(f"   - output         : {args.output} (default if not specified)")
     print("")
 
     print(">> Démarrage de la transcription")
     try:
         print("   -> Chargement du modèle...")
         device = "cuda"
-        model = whisperx.load_model(args.model, device, compute_type=args.compute_type)
+        model = suppress_stdout(whisperx.load_model, args.model, device, compute_type=args.compute_type)
     except Exception as e:
         print("   !! Erreur lors du chargement du modèle :", e)
         return
 
     try:
         print("   -> Chargement et préparation de l'audio...")
-        audio = whisperx.load_audio(args.audio_file)
+        audio = suppress_stdout(whisperx.load_audio, args.audio_file)
     except Exception as e:
         print("   !! Erreur lors du chargement de l'audio :", e)
         return
 
     try:
         print("   -> Transcription...")
-        result = model.transcribe(audio, batch_size=args.batch_size)
+        result = suppress_stdout(model.transcribe, audio, batch_size=args.batch_size)
     except Exception as e:
         print("   !! Erreur pendant la transcription :", e)
         return
 
     try:
-        language = args.language if args.language else result["language"]
+        lang = args.language if args.language else result.get("language", "fr")
         print("   -> Alignement des timestamps...")
-        model_a, metadata = whisperx.load_align_model(language_code=language, device=device)
-        result_aligned = whisperx.align(result["segments"], model_a, metadata, audio, device, return_char_alignments=False)
+        model_a, metadata = suppress_stdout(whisperx.load_align_model, language_code=lang, device=device)
+        result_aligned = suppress_stdout(whisperx.align, result["segments"], model_a, metadata, audio, device, return_char_alignments=False)
     except Exception as e:
         print("   !! Erreur lors de l'alignement :", e)
         return
 
     if args.diarize:
-        # Si aucun token n'est fourni, demander interactivement
-        if not args.hf_token:
-            try:
-                token_input = input("   -> Token Hugging Face requis pour la diarization. Veuillez le saisir : ")
-                args.hf_token = token_input.strip()
-            except Exception as e:
-                print("   !! Erreur lors de la saisie du token :", e)
-                return
-            if not args.hf_token:
-                print("   !! Erreur: Aucun token fourni. La diarization ne peut être effectuée.")
-                return
         try:
             print("   -> Exécution de la diarization...")
-            diarize_model = whisperx.DiarizationPipeline(use_auth_token=args.hf_token, device=device)
-            diarize_segments = diarize_model(audio)
+            # On essaie d'exécuter la diarization avec le token fourni (même vide)
+            diarize_model = suppress_stdout(whisperx.DiarizationPipeline, use_auth_token=args.hf_token, device=device)
+            diarize_segments = suppress_stdout(diarize_model, audio)
             result_aligned = whisperx.assign_word_speakers(diarize_segments, result_aligned)
         except Exception as e:
-            print("   !! Erreur lors de la diarization :", e)
-            return
+            # Si l'erreur semble liée au token, on le demande à l'utilisateur et on réessaie.
+            if "token" in str(e).lower():
+                token_input = input("   -> La diarization a échoué en raison d'un token manquant. Veuillez saisir votre token Hugging Face : ").strip()
+                if not token_input:
+                    print("   !! Erreur : Aucun token fourni. La diarization ne peut être effectuée.")
+                    return
+                try:
+                    diarize_model = suppress_stdout(whisperx.DiarizationPipeline, use_auth_token=token_input, device=device)
+                    diarize_segments = suppress_stdout(diarize_model, audio)
+                    result_aligned = whisperx.assign_word_speakers(diarize_segments, result_aligned)
+                except Exception as e2:
+                    print("   !! Erreur lors de la diarization même après saisie du token :", e2)
+                    return
+            else:
+                print("   !! Erreur lors de la diarization :", e)
+                return
 
     try:
         print("   -> Sauvegarde des résultats...")
-        output_format = args.output_format.lower()
-        if output_format == "json":
+        fmt = args.output_format.lower()
+        if fmt == "json":
             save_json(args.output, result_aligned)
-        elif output_format == "txt":
+        elif fmt == "txt":
             save_txt(args.output, result_aligned.get("segments", []))
-        elif output_format == "srt":
+        elif fmt == "srt":
             save_srt(args.output, result_aligned.get("segments", []))
     except Exception as e:
         print("   !! Erreur lors de la sauvegarde :", e)
