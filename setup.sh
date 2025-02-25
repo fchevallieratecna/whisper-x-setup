@@ -158,7 +158,7 @@ run_step "Installation de WhisperX" pip install whisperx
 REPO_PATH="$(pwd)"
 
 # 9. Création du wrapper exécutable 'whisperx_cli' avec chemin absolu
-run_step "Création du wrapper exécutable 'whisperx_cli'" bash -c "cat > whisperx_cli << EOF
+run_step "Création du wrapper exécutable 'whisperx_cli'" bash -c "cat > whisperx_cli <<EOF
 #!/bin/bash
 # Wrapper pour lancer 'whisperx_cli.py' dans l'environnement virtuel
 REPO_PATH=\"${REPO_PATH}\"
