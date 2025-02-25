@@ -56,7 +56,6 @@ def save_srt(output_path, segments):
             f.write(f"{idx}\n{start_time} --> {end_time}\n{text}\n\n")
 
 def main():
-    # Valeurs par défaut
     default_values = {
         "model": "large-v3",
         "diarize": True,
@@ -76,18 +75,17 @@ def main():
     parser.add_argument("--compute_type", type=str, default="float16", help="Type de calcul (default: float16)")
     parser.add_argument("--language", type=str, default=default_values["language"], help="Code langue (default: fr)")
     parser.add_argument("--hf_token", type=str, default="", help="Token Hugging Face pour diarization")
+    parser.add_argument("--initial_prompt", type=str, default="", help="Prompt initial à passer à la transcription (default: empty)")
     parser.add_argument("--output", type=str, default=None, help="Fichier de sortie (par défaut, même nom que l'audio)")
     parser.add_argument("--output_format", type=str, choices=["json", "txt", "srt"], default=default_values["output_format"],
                         help="Format de sortie (default: txt)")
     args = parser.parse_args()
 
-    # Calcul du nom de fichier de sortie par défaut si non fourni
     if args.output is None:
         base, _ = os.path.splitext(os.path.basename(args.audio_file))
         ext = {"json": ".json", "txt": ".txt", "srt": ".srt"}[args.output_format.lower()]
         args.output = os.path.join(os.path.dirname(args.audio_file), base + ext)
 
-    # Affichage minimal des paramètres utilisés
     print(">> Paramètres utilisés :")
     print(f"   - audio_file     : {args.audio_file}")
     for key in default_values:
@@ -99,6 +97,7 @@ def main():
     print(f"   - output_format  : {args.output_format} (default)" if args.output_format == default_values["output_format"]
           else f"   - output_format  : {args.output_format} (overridden)")
     print(f"   - output         : {args.output} (default if not specified)")
+    print(f"   - initial_prompt : '{args.initial_prompt}' (default)" if args.initial_prompt == "" else f"   - initial_prompt : '{args.initial_prompt}' (overridden)")
     print("")
 
     print(">> Démarrage de la transcription")
@@ -119,7 +118,8 @@ def main():
 
     try:
         print("   -> Transcription...")
-        result = suppress_stdout(model.transcribe, audio, batch_size=args.batch_size)
+        # On transmet initial_prompt même si c'est vide
+        result = suppress_stdout(model.transcribe, audio, batch_size=args.batch_size, initial_prompt=args.initial_prompt)
     except Exception as e:
         print("   !! Erreur pendant la transcription :", e)
         return
@@ -136,14 +136,12 @@ def main():
     if args.diarize:
         try:
             print("   -> Exécution de la diarization...")
-            # On essaie d'exécuter la diarization avec le token fourni (même vide)
             diarize_model = suppress_stdout(whisperx.DiarizationPipeline, use_auth_token=args.hf_token, device=device)
             diarize_segments = suppress_stdout(diarize_model, audio)
             result_aligned = whisperx.assign_word_speakers(diarize_segments, result_aligned)
         except Exception as e:
-            # Si l'erreur semble liée au token, on le demande à l'utilisateur et on réessaie.
             if "token" in str(e).lower():
-                token_input = input("   -> La diarization a échoué en raison d'un token manquant. Veuillez saisir votre token Hugging Face : ").strip()
+                token_input = input("   -> La diarization a échoué à cause du token. Veuillez saisir votre token Hugging Face : ").strip()
                 if not token_input:
                     print("   !! Erreur : Aucun token fourni. La diarization ne peut être effectuée.")
                     return
@@ -152,7 +150,7 @@ def main():
                     diarize_segments = suppress_stdout(diarize_model, audio)
                     result_aligned = whisperx.assign_word_speakers(diarize_segments, result_aligned)
                 except Exception as e2:
-                    print("   !! Erreur lors de la diarization même après saisie du token :", e2)
+                    print("   !! Erreur lors de la diarization après saisie du token :", e2)
                     return
             else:
                 print("   !! Erreur lors de la diarization :", e)
