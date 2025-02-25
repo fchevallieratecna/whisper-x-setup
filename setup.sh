@@ -161,7 +161,7 @@ ABS_PATH="$(pwd)"
 run_step "Création du wrapper exécutable 'whisperx_cli'" bash -c "cat <<EOF > whisperx_cli
 #!/bin/bash
 source \"${ABS_PATH}/whisperx_env/bin/activate\"
-python \"${ABS_PATH}/whisperx_cli.py\" \"\$@\"
+python \"${ABS_PATH}/whisperx_cli.py\" \"\\\$@\"
 EOF"
 chmod +x whisperx_cli
 
