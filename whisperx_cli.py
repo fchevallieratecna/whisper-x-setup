@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import whisperx
 
 def seconds_to_srt_time(seconds: float) -> str:
@@ -34,22 +35,55 @@ def save_srt(output_path, segments):
             f.write(f"{idx}\n{start_time} --> {end_time}\n{text}\n\n")
 
 def main():
+    default_values = {
+        "model": "large-v3",
+        "diarize": True,
+        "batch_size": 8,
+        "output_format": "txt",
+        "language": "fr",
+    }
     parser = argparse.ArgumentParser(
         description="Transcription, alignement et diarization avec WhisperX"
     )
     parser.add_argument("audio_file", type=str, help="Chemin vers le fichier audio")
-    parser.add_argument("--model", type=str, default="large-v3", help="Modèle WhisperX (default: large-v3)")
-    parser.add_argument("--language", type=str, default="", help="Code langue (ex: fr, en, etc.)")
-    parser.add_argument("--hf_token", type=str, default="", help="Token Hugging Face pour diarization")
-    parser.add_argument("--diarize", action="store_true", help="Activer la diarization (nécessite --hf_token)")
-    parser.add_argument("--batch_size", type=int, default=4, help="Taille du batch (default: 4)")
+    parser.add_argument("--model", type=str, default=default_values["model"], help="Modèle WhisperX (default: large-v3)")
+    # Pour activer ou désactiver la diarization, on utilise un système de flag opposé
+    parser.add_argument("--diarize", dest="diarize", action="store_true", default=default_values["diarize"],
+                        help="Active la diarization (default: activée)")
+    parser.add_argument("--no-diarize", dest="diarize", action="store_false", help="Désactive la diarization")
+    parser.add_argument("--batch_size", type=int, default=default_values["batch_size"], help="Taille du batch (default: 8)")
     parser.add_argument("--compute_type", type=str, default="float16", help="Type de calcul (default: float16)")
-    parser.add_argument("--output", type=str, default="transcription.json", help="Fichier de sortie (default: transcription.json)")
-    parser.add_argument("--output_format", type=str, choices=["json", "txt", "srt"], default="json", help="Format de sortie (default: json)")
+    parser.add_argument("--language", type=str, default=default_values["language"], help="Code langue (default: fr)")
+    parser.add_argument("--hf_token", type=str, default="", help="Token Hugging Face pour diarization")
+    parser.add_argument("--output", type=str, default=None, help="Fichier de sortie (par défaut, même nom que l'audio)")
+    parser.add_argument("--output_format", type=str, choices=["json", "txt", "srt"], default=default_values["output_format"],
+                        help="Format de sortie (default: txt)")
     args = parser.parse_args()
 
-    # Affichage minimal de la progression
-    print(">> Démarrage de la transcription")
+    # Calcul du nom de fichier de sortie par défaut si non fourni
+    if args.output is None:
+        base, _ = os.path.splitext(os.path.basename(args.audio_file))
+        ext = {"json": ".json", "txt": ".txt", "srt": ".srt"}[args.output_format.lower()]
+        args.output = os.path.join(os.path.dirname(args.audio_file), base + ext)
+
+    # Affichage des paramètres utilisés
+    print(">> Paramètres utilisés :")
+    print(f"   - audio_file      : {args.audio_file}")
+    for key in default_values:
+        val = getattr(args, key)
+        if val == default_values[key]:
+            print(f"   - {key:<15}: {val} (default)")
+        else:
+            print(f"   - {key:<15}: {val} (overridden)")
+    # Pour output_format et output, on affiche
+    if args.output_format == default_values["output_format"]:
+        print(f"   - output_format   : {args.output_format} (default)")
+    else:
+        print(f"   - output_format   : {args.output_format} (overridden)")
+    # Afficher output file
+    print(f"   - output          : {args.output} (default if not specified)")
+
+    print("\n>> Démarrage de la transcription")
     try:
         print("   -> Chargement du modèle...")
         device = "cuda"
@@ -108,6 +142,6 @@ def main():
         return
 
     print(">> Transcription terminée avec succès.")
-
+    
 if __name__ == "__main__":
     main()
