@@ -67,18 +67,25 @@ def main():
         description="Transcription, alignement et diarization avec WhisperX"
     )
     parser.add_argument("audio_file", type=str, help="Chemin vers le fichier audio")
-    parser.add_argument("--model", type=str, default=default_values["model"], help="Modèle WhisperX (default: large-v3)")
+    parser.add_argument("--model", type=str, default=default_values["model"],
+                        help="Modèle WhisperX (default: large-v3)")
     parser.add_argument("--diarize", dest="diarize", action="store_true", default=default_values["diarize"],
                         help="Active la diarization (default: activée)")
     parser.add_argument("--no-diarize", dest="diarize", action="store_false", help="Désactive la diarization")
-    parser.add_argument("--batch_size", type=int, default=default_values["batch_size"], help="Taille du batch (default: 8)")
-    parser.add_argument("--compute_type", type=str, default="float16", help="Type de calcul (default: float16)")
-    parser.add_argument("--language", type=str, default=default_values["language"], help="Code langue (default: fr)")
+    parser.add_argument("--batch_size", type=int, default=default_values["batch_size"],
+                        help="Taille du batch (default: 8)")
+    parser.add_argument("--compute_type", type=str, default="float16",
+                        help="Type de calcul (default: float16)")
+    parser.add_argument("--language", type=str, default=default_values["language"],
+                        help="Code langue (default: fr)")
     parser.add_argument("--hf_token", type=str, default="", help="Token Hugging Face pour diarization")
-    parser.add_argument("--initial_prompt", type=str, default="", help="Prompt initial à passer à la transcription (default: empty)")
-    parser.add_argument("--output", type=str, default=None, help="Fichier de sortie (par défaut, même nom que l'audio)")
-    parser.add_argument("--output_format", type=str, choices=["json", "txt", "srt"], default=default_values["output_format"],
-                        help="Format de sortie (default: txt)")
+    # Nouvel argument --initial_prompt, vide par défaut
+    parser.add_argument("--initial_prompt", type=str, default="",
+                        help="Prompt initial à passer lors du chargement du modèle (default: empty)")
+    parser.add_argument("--output", type=str, default=None,
+                        help="Fichier de sortie (par défaut, même nom que l'audio)")
+    parser.add_argument("--output_format", type=str, choices=["json", "txt", "srt"],
+                        default=default_values["output_format"], help="Format de sortie (default: txt)")
     args = parser.parse_args()
 
     if args.output is None:
@@ -104,7 +111,9 @@ def main():
     try:
         print("   -> Chargement du modèle...")
         device = "cuda"
-        model = suppress_stdout(whisperx.load_model, args.model, device, compute_type=args.compute_type)
+        # Passage du prompt initial directement lors du chargement du modèle
+        model = suppress_stdout(whisperx.load_model, args.model, device,
+                                  compute_type=args.compute_type, initial_prompt=args.initial_prompt)
     except Exception as e:
         print("   !! Erreur lors du chargement du modèle :", e)
         return
@@ -118,8 +127,7 @@ def main():
 
     try:
         print("   -> Transcription...")
-        # On transmet initial_prompt même si c'est vide
-        result = suppress_stdout(model.transcribe, audio, batch_size=args.batch_size, initial_prompt=args.initial_prompt)
+        result = suppress_stdout(model.transcribe, audio, batch_size=args.batch_size)
     except Exception as e:
         print("   !! Erreur pendant la transcription :", e)
         return
