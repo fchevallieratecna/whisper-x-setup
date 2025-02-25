@@ -1,6 +1,6 @@
 #!/bin/bash
 # Nom du script : setup.sh
-# Ce script configure l'environnement et lance un test de transcription.
+# Ce script clone le dépôt, installe l'environnement virtuel et les dépendances, puis lance un test de transcription.
 # Rendre exécutable avec : chmod +x setup.sh
 
 # --- Variables d'affichage ---
@@ -8,6 +8,10 @@ BOLD="\e[1m"
 RESET="\e[0m"
 LOADING="⏳"
 DONE="✅"
+
+# --- URL du dépôt à cloner ---
+REPO_URL="https://github.com/fchevallieratecna/whisper-x-setup.git"
+REPO_DIR="whisper-x-setup"
 
 # --- Fonctions de log avec affichage sur une seule ligne ---
 run_step() {
@@ -39,45 +43,49 @@ check_cuda() {
 }
 
 # --- Début du script ---
-check_cuda
 
-# 1. Création du dossier de travail "whisperx" (s'il n'existe pas déjà)
-WORKDIR="whisperx"
-if [ ! -d "$WORKDIR" ]; then
-  run_step "Création du dossier '$WORKDIR'" mkdir "$WORKDIR"
+# 1. Cloner le dépôt (si nécessaire)
+if [ ! -d "$REPO_DIR" ]; then
+  echo -e "${LOADING} ${BOLD}Clonage du dépôt depuis GitHub${RESET} [${LOADING} en cours...]"
+  git clone "$REPO_URL" > /dev/null 2>&1
+  echo -e "\r${DONE} ${BOLD}Clonage du dépôt depuis GitHub${RESET} [${DONE} terminé]"
 else
-  echo -e "${DONE} ${BOLD}Création du dossier '$WORKDIR'${RESET} [déjà existant]"
+  echo -e "${DONE} ${BOLD}Dépôt déjà cloné${RESET}"
 fi
 
-cd "$WORKDIR" || exit
+# Se placer dans le dossier cloné
+cd "$REPO_DIR" || exit
 
 # 2. Vérifier la présence du fichier Python
 if [ ! -f "whisperx_cli.py" ]; then
   echo -e "\n❌ ${BOLD}Erreur${RESET}: Le fichier 'whisperx_cli.py' est introuvable dans $(pwd)."
-  echo "Veuillez vous assurer qu'il est présent dans votre dépôt."
+  echo "Veuillez vérifier la structure de votre dépôt."
   exit 1
 else
   echo -e "${DONE} ${BOLD}Fichier 'whisperx_cli.py' trouvé${RESET}"
 fi
 
-# 3. Création de l'environnement virtuel
+# 3. Vérifier CUDA 12.4
+check_cuda
+
+# 4. Création de l'environnement virtuel
 run_step "Création de l'environnement virtuel 'whisperx_env'" python3 -m venv whisperx_env
 
-# 4. Activation de l'environnement virtuel (cette étape reste dans le shell courant)
+# 5. Activation de l'environnement virtuel (cette étape reste dans le shell courant)
 echo -ne "${LOADING} ${BOLD}Activation de l'environnement virtuel${RESET} [${LOADING} en cours...]"
 source whisperx_env/bin/activate
 echo -e "\r${DONE} ${BOLD}Activation de l'environnement virtuel${RESET} [${DONE} terminé]"
 
-# 5. Mise à jour de pip
+# 6. Mise à jour de pip
 run_step "Mise à jour de pip" pip install --upgrade pip
 
-# 6. Installation de PyTorch, torchvision et torchaudio pour CUDA 12.4
+# 7. Installation de PyTorch, torchvision et torchaudio pour CUDA 12.4
 run_step "Installation de PyTorch, torchvision et torchaudio pour CUDA 12.4" pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu124
 
-# 7. Installation de WhisperX depuis PyPI
+# 8. Installation de WhisperX depuis PyPI
 run_step "Installation de WhisperX" pip install whisperx
 
-# 8. Création du wrapper exécutable 'whisperx_cli'
+# 9. Création du wrapper exécutable 'whisperx_cli'
 run_step "Création du wrapper exécutable 'whisperx_cli'" bash -c "cat > whisperx_cli << 'EOF'
 #!/bin/bash
 # Wrapper pour lancer 'whisperx_cli.py' dans l'environnement virtuel
@@ -88,11 +96,11 @@ python \"\$DIR/whisperx_cli.py\" \"\$@\"
 EOF"
 chmod +x whisperx_cli
 
-# 9. Demander le token Hugging Face (facultatif) pour la diarization
-echo -n "Veuillez entrer votre token Hugging Face (pour diarization) ou appuyez sur Entrée pour l'ignorer : "
+# 10. Demander le token Hugging Face (facultatif) pour la diarization
+echo -n "Veuillez entrer votre token Hugging Face (pour la diarization) ou appuyez sur Entrée pour l'ignorer : "
 read -r HF_TOKEN
 
-# 10. Lancement d'un test final pour télécharger les modèles et traiter 'audio.mp3'
+# 11. Lancement d'un test final pour télécharger les modèles et traiter 'audio.mp3'
 echo -ne "${LOADING} ${BOLD}Test final : transcription sur 'audio.mp3'${RESET} [${LOADING} en cours...]"
 if [ -n "$HF_TOKEN" ]; then
   python whisperx_cli.py "audio.mp3" --model large-v3 --language fr --hf_token "$HF_TOKEN" --diarize --output test_output.srt --output_format srt > /dev/null 2>&1
