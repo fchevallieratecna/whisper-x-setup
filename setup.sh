@@ -1,6 +1,31 @@
 #!/bin/bash
 # Nom du script : setup.sh
-# Ce script clone le dépôt, installe l'environnement virtuel et les dépendances, puis lance un test de transcription.
+# Ce script clone le dépôt (si nécessaire), demande le token HF, configure l'environnement virtuel,
+# installe les dépendances, crée le wrapper et lance un test final de transcription.
+# Il vérifie également que nvidia-smi fonctionne et copie le wrapper dans /usr/local/bin
+# pour que la commande 'whisperx_cli' soit accessible globalement.
+#
+# Usage du script :
+#   ./setup.sh [-v]
+#     -v : mode verbose (affiche les sorties des commandes)
+#
+# Une fois l'installation terminée, vous pouvez lancer vos transcriptions via :
+#   whisperx_cli [audio_file] [OPTIONS]
+#
+# Options principales de whisperx_cli (passées à whisperx_cli.py) :
+#   audio_file          : chemin vers le fichier audio (ex : audio.mp3)
+#   --model MODEL       : modèle WhisperX à utiliser (default : large-v3)
+#   --language LANG     : code langue (ex : fr, en, etc.). Si non spécifié, le langage est détecté automatiquement.
+#   --hf_token TOKEN    : token Hugging Face (requis pour activer la diarization)
+#   --diarize           : active la diarization (nécessite --hf_token)
+#   --batch_size N      : taille du batch pour la transcription (default : 4)
+#   --compute_type TYPE : type de calcul (ex : float16 pour GPU, int8 pour réduire l'utilisation de la mémoire GPU)
+#   --output FILE       : fichier de sortie (default : transcription.json)
+#   --output_format FMT : format de sortie : json, txt ou srt (default : json)
+#
+# Exemple :
+#   whisperx_cli audio.mp3 --model large-v3 --language fr --hf_token VOTRE_TOKEN --diarize --output sous_titres.srt --output_format srt
+#
 # Rendre exécutable avec : chmod +x setup.sh
 
 # --- Variables d'affichage ---
@@ -9,28 +34,43 @@ RESET="\e[0m"
 LOADING="⏳"
 DONE="✅"
 
-# --- URL du dépôt à cloner ---
-REPO_URL="https://github.com/fchevallieratecna/whisper-x-setup.git"
-REPO_DIR="whisper-x-setup"
+# --- Mode verbose ---
+VERBOSE=0
+if [ "$1" == "-v" ]; then
+  VERBOSE=1
+fi
 
-# --- Fonctions de log avec affichage sur une seule ligne ---
+# --- Fonction de log et d'exécution d'une étape ---
 run_step() {
   local description="$1"
   shift
   echo -ne "${LOADING} ${BOLD}${description}${RESET} [${LOADING} en cours...]"
-  "$@" > /dev/null 2>&1
+  if [ $VERBOSE -eq 1 ]; then
+    "$@"
+  else
+    "$@" > /dev/null 2>&1
+  fi
   echo -e "\r${DONE} ${BOLD}${description}${RESET} [${DONE} terminé]"
 }
 
-# --- Vérification de CUDA 12.4 ---
+# --- Vérification de CUDA 12.4 via nvcc et nvidia-smi ---
 check_cuda() {
   echo -ne "${LOADING} ${BOLD}Vérification de CUDA 12.4${RESET} [${LOADING} en cours...]"
+
+  # Vérifier la présence de nvcc et extraire la version
   if command -v nvcc >/dev/null 2>&1; then
     CUDA_VERSION=$(nvcc --version | grep -o "release [0-9]*\.[0-9]*" | head -n1 | cut -d' ' -f2)
   elif [ -f "/usr/local/cuda/version.txt" ]; then
     CUDA_VERSION=$(grep -o "[0-9]*\.[0-9]*" /usr/local/cuda/version.txt | head -n1)
   else
     CUDA_VERSION=""
+  fi
+
+  # Vérifier également nvidia-smi
+  if ! command -v nvidia-smi >/dev/null 2>&1 || ! nvidia-smi >/dev/null 2>&1; then
+    echo -e "\r❌ ${BOLD}Vérification de CUDA 12.4${RESET} [${BOLD}ERREUR${RESET}]"
+    echo "nvidia-smi ne fonctionne pas ou n'est pas installé."
+    exit 1
   fi
 
   if [[ "$CUDA_VERSION" == "12.4" ]]; then
@@ -41,6 +81,14 @@ check_cuda() {
     exit 1
   fi
 }
+
+# --- Demande du token Hugging Face dès le début ---
+echo -n "Veuillez entrer votre token Hugging Face (pour la diarization) ou appuyez sur Entrée pour l'ignorer : "
+read -r HF_TOKEN
+
+# --- URL et nom du dépôt à cloner ---
+REPO_URL="https://github.com/fchevallieratecna/whisper-x-setup.git"
+REPO_DIR="whisper-x-setup"
 
 # --- Début du script ---
 
@@ -65,13 +113,13 @@ else
   echo -e "${DONE} ${BOLD}Fichier 'whisperx_cli.py' trouvé${RESET}"
 fi
 
-# 3. Vérifier CUDA 12.4
+# 3. Vérification de CUDA 12.4 et de nvidia-smi
 check_cuda
 
 # 4. Création de l'environnement virtuel
 run_step "Création de l'environnement virtuel 'whisperx_env'" python3 -m venv whisperx_env
 
-# 5. Activation de l'environnement virtuel (cette étape reste dans le shell courant)
+# 5. Activation de l'environnement virtuel (reste dans le shell courant)
 echo -ne "${LOADING} ${BOLD}Activation de l'environnement virtuel${RESET} [${LOADING} en cours...]"
 source whisperx_env/bin/activate
 echo -e "\r${DONE} ${BOLD}Activation de l'environnement virtuel${RESET} [${DONE} terminé]"
@@ -96,17 +144,54 @@ python \"\$DIR/whisperx_cli.py\" \"\$@\"
 EOF"
 chmod +x whisperx_cli
 
-# 10. Demander le token Hugging Face (facultatif) pour la diarization
-echo -n "Veuillez entrer votre token Hugging Face (pour la diarization) ou appuyez sur Entrée pour l'ignorer : "
-read -r HF_TOKEN
+# 10. Déconnexion de l'environnement virtuel pour le test final
+deactivate 2>/dev/null
 
-# 11. Lancement d'un test final pour télécharger les modèles et traiter 'audio.mp3'
+# 11. Lancement du test final via le wrapper fraîchement créé (hors du venv courant)
 echo -ne "${LOADING} ${BOLD}Test final : transcription sur 'audio.mp3'${RESET} [${LOADING} en cours...]"
 if [ -n "$HF_TOKEN" ]; then
-  python whisperx_cli.py "audio.mp3" --model large-v3 --language fr --hf_token "$HF_TOKEN" --diarize --output test_output.srt --output_format srt > /dev/null 2>&1
+  ./whisperx_cli audio.mp3 --model large-v3 --language fr --hf_token "$HF_TOKEN" --diarize --output test_output.srt --output_format srt > /dev/null 2>&1
 else
-  python whisperx_cli.py "audio.mp3" --model large-v3 --language fr --output test_output.srt --output_format srt > /dev/null 2>&1
+  ./whisperx_cli audio.mp3 --model large-v3 --language fr --output test_output.srt --output_format srt > /dev/null 2>&1
 fi
 echo -e "\r${DONE} ${BOLD}Test final : transcription sur 'audio.mp3'${RESET} [${DONE} terminé]"
 
-echo -e "\n${DONE} ${BOLD}Setup complet.${RESET} Vous pouvez lancer vos transcriptions via './whisperx_cli' dans ce dossier."
+# 12. Vérification finale du fichier de sous-titres
+if [ -s "test_output.srt" ]; then
+  echo -e "${DONE} ${BOLD}Fichier de sous-titres 'test_output.srt' créé et non vide.${RESET}"
+else
+  echo -e "❌ ${BOLD}Erreur${RESET}: Le fichier 'test_output.srt' n'existe pas ou est vide."
+  exit 1
+fi
+
+# 13. Copier le wrapper dans /usr/local/bin pour le rendre accessible de partout
+echo -ne "${LOADING} ${BOLD}Installation globale de 'whisperx_cli'${RESET} [${LOADING} en cours...]"
+if [ "$(id -u)" -ne 0 ]; then
+  sudo cp whisperx_cli /usr/local/bin/whisperx_cli
+else
+  cp whisperx_cli /usr/local/bin/whisperx_cli
+fi
+chmod +x /usr/local/bin/whisperx_cli
+echo -e "\r${DONE} ${BOLD}Installation globale de 'whisperx_cli'${RESET} [${DONE} terminé]"
+
+# --- Documentation d'utilisation ---
+echo -e "\n${BOLD}Documentation d'utilisation de 'whisperx_cli':${RESET}"
+echo "---------------------------------------------------------"
+echo "Syntaxe de base :"
+echo "  whisperx_cli [audio_file] [OPTIONS]"
+echo ""
+echo "Paramètres :"
+echo "  audio_file          : Chemin vers le fichier audio (ex : audio.mp3)"
+echo "  --model MODEL       : Modèle WhisperX à utiliser (default : large-v3)"
+echo "  --language LANG     : Code langue (ex : fr, en, etc.). Si non spécifié, le langage est détecté automatiquement."
+echo "  --hf_token TOKEN    : Token Hugging Face (requis pour activer la diarization)"
+echo "  --diarize           : Active la diarization (nécessite --hf_token)"
+echo "  --batch_size N      : Taille du batch pour la transcription (default : 4)"
+echo "  --compute_type TYPE : Type de calcul (ex : float16 pour GPU, int8 pour réduire l'utilisation de la mémoire GPU)"
+echo "  --output FILE       : Fichier de sortie (default : transcription.json)"
+echo "  --output_format FMT : Format de sortie : json, txt ou srt (default : json)"
+echo ""
+echo "Exemple d'utilisation :"
+echo "  whisperx_cli audio.mp3 --model large-v3 --language fr --hf_token YOUR_TOKEN --diarize --output sous_titres.srt --output_format srt"
+echo "---------------------------------------------------------"
+echo -e "\n${DONE} ${BOLD}Setup complet.${RESET} Vous pouvez lancer vos transcriptions depuis n'importe où avec la commande 'whisperx_cli'."
