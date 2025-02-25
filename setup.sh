@@ -133,20 +133,22 @@ echo -e "\r${DONE} ${BOLD}Activation de l'environnement virtuel${RESET} [${DONE}
 # 6. Mise à jour de pip
 run_step "Mise à jour de pip" pip install --upgrade pip
 
-# 7. Installation de PyTorch, torchvision et torchaudio pour CUDA 12.4
-run_step "Installation de PyTorch, torchvision et torchaudio pour CUDA 12.4" pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu124
+# 7. Installation de PyTorch, torchvision et torchaudio pour CUDA 12.4 (cette étape peut prendre plusieurs minutes)
+run_step "Installation de PyTorch, torchvision et torchaudio pour CUDA 12.4 (peut prendre plusieurs minutes)" pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu124
 
 # 8. Installation de WhisperX depuis PyPI
 run_step "Installation de WhisperX" pip install whisperx
 
-# 9. Création du wrapper exécutable 'whisperx_cli'
-run_step "Création du wrapper exécutable 'whisperx_cli'" bash -c "cat > whisperx_cli << 'EOF'
+# Récupérer le chemin absolu du répertoire cloné
+REPO_PATH="$(pwd)"
+
+# 9. Création du wrapper exécutable 'whisperx_cli' avec chemin absolu
+run_step "Création du wrapper exécutable 'whisperx_cli'" bash -c "cat > whisperx_cli << EOF
 #!/bin/bash
 # Wrapper pour lancer 'whisperx_cli.py' dans l'environnement virtuel
-
-DIR=\"\$( cd \"\$( dirname \"\${BASH_SOURCE[0]}\" )\" && pwd )\"
-source \"\$DIR/whisperx_env/bin/activate\"
-python \"\$DIR/whisperx_cli.py\" \"\$@\"
+REPO_PATH=\"${REPO_PATH}\"
+source \"\${REPO_PATH}/whisperx_env/bin/activate\"
+python \"\${REPO_PATH}/whisperx_cli.py\" \"\$@\"
 EOF"
 chmod +x whisperx_cli
 
