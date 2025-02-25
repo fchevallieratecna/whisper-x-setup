@@ -157,13 +157,12 @@ run_step "Installation de WhisperX" pip install whisperx
 # Récupérer le chemin absolu du répertoire cloné
 REPO_PATH="$(pwd)"
 
-# 9. Création du wrapper exécutable 'whisperx_cli' avec chemin absolu
-run_step "Création du wrapper exécutable 'whisperx_cli'" bash -c "cat > whisperx_cli <<EOF
+# Créer le fichier wrapper avec le chemin en dur
+run_step "Création du wrapper exécutable 'whisperx_cli'" bash -c "cat <<EOF > whisperx_cli
 #!/bin/bash
 # Wrapper pour lancer 'whisperx_cli.py' dans l'environnement virtuel
-REPO_PATH=\"${REPO_PATH}\"
-source \"\${REPO_PATH}/whisperx_env/bin/activate\"
-python \"\${REPO_PATH}/whisperx_cli.py\" \"\$@\"
+source \"${REPO_PATH}/whisperx_env/bin/activate\"
+python \"${REPO_PATH}/whisperx_cli.py\" \"\$@\"
 EOF"
 chmod +x whisperx_cli
 
