@@ -1,8 +1,19 @@
 #!/bin/bash
 # Nom du script : setup.sh
-# Ce script clone le dépôt (si nécessaire), demande le token HF, configure l'environnement virtuel,
-# installe les dépendances, crée le wrapper, lance un test final et, en cas d'interruption (Ctrl+C),
-# annule les changements effectués.
+# Ce script réalise les opérations suivantes :
+# PARTIE 1 : Installation et configuration du CLI WhisperX
+#   - Clone le dépôt whisper-x-setup (si nécessaire)
+#   - Demande le token HF
+#   - Configure l'environnement virtuel, installe les dépendances et crée le wrapper
+#   - Lance un test final de transcription
+#   - Copie le wrapper dans /usr/local/bin pour une utilisation globale
+#
+# PARTIE 2 : Installation et lancement de whisper-api
+#   - Clone le dépôt whisper-api (si nécessaire)
+#   - Installe PM2 (globalement) si besoin
+#   - Exécute "npm install" puis "npm run build"
+#   - Lance le projet avec PM2 en utilisant UPLOAD_PATH=/tmp
+#   - Crée un script de mise à jour (whisper_api_update) pour actualiser l'API
 #
 # Usage : ./setup.sh [-v]
 #   -v : mode verbose (affiche les sorties des commandes)
@@ -91,11 +102,13 @@ check_cuda() {
   fi
 }
 
-# --- URL et nom du dépôt à cloner ---
+# --- PARTIE 1 : Installation de WhisperX CLI ---
+
+echo -e "\n${BOLD}=== Partie 1 : Configuration de WhisperX CLI ===${RESET}"
+
+# URL et nom du dépôt whisper-x-setup
 REPO_URL="https://github.com/fchevallieratecna/whisper-x-setup.git"
 REPO_DIR="whisper-x-setup"
-
-# --- Début du script ---
 
 # 1. Cloner le dépôt (si nécessaire)
 if [ ! -d "$REPO_DIR" ]; then
@@ -125,7 +138,7 @@ check_cuda
 run_step "Création de l'environnement virtuel 'whisperx_env'" python3 -m venv whisperx_env
 ENV_CREATED=1
 
-# 5. Activation de l'environnement virtuel (reste dans le shell courant)
+# 5. Activation de l'environnement virtuel (dans ce shell)
 echo -ne "${LOADING} ${BOLD}Activation de l'environnement virtuel${RESET} [${LOADING} en cours...]"
 source whisperx_env/bin/activate
 echo -e "\r${DONE} ${BOLD}Activation de l'environnement virtuel${RESET} [${DONE} terminé]"
@@ -133,8 +146,10 @@ echo -e "\r${DONE} ${BOLD}Activation de l'environnement virtuel${RESET} [${DONE}
 # 6. Mise à jour de pip
 run_step "Mise à jour de pip" pip install --upgrade pip
 
-# 7. Installation de PyTorch, torchvision et torchaudio pour CUDA 12.4 (cette étape peut prendre plusieurs minutes)
-run_step "Installation de PyTorch, torchvision et torchaudio pour CUDA 12.4 (peut prendre plusieurs minutes)" pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu124
+# 7. Installation de PyTorch, torchvision et torchaudio pour CUDA 12.4
+# (Cette étape peut prendre plusieurs minutes)
+run_step "Installation de PyTorch, torchvision et torchaudio pour CUDA 12.4 (peut prendre plusieurs minutes)" \
+         pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu124
 
 # 8. Installation de WhisperX depuis PyPI
 run_step "Installation de WhisperX" pip install whisperx
@@ -155,7 +170,7 @@ chmod +x whisperx_cli
 # 10. Déconnexion de l'environnement virtuel pour le test final
 deactivate 2>/dev/null
 
-# 11. Lancement du test final via le wrapper fraîchement créé (hors du venv courant)
+# 11. Lancement du test final via le wrapper (hors du venv courant)
 echo -ne "${LOADING} ${BOLD}Test final : transcription sur 'audio.mp3'${RESET} [${LOADING} en cours...]"
 if [ -n "$HF_TOKEN" ]; then
   ./whisperx_cli audio.mp3 --model large-v3 --language fr --hf_token "$HF_TOKEN" --diarize --output test_output.srt --output_format srt > /dev/null 2>&1
@@ -172,7 +187,7 @@ else
   exit 1
 fi
 
-# 13. Copier le wrapper dans /usr/local/bin pour le rendre accessible de partout
+# 13. Copier le wrapper dans /usr/local/bin pour le rendre accessible globalement
 echo -ne "${LOADING} ${BOLD}Installation globale de 'whisperx_cli'${RESET} [${LOADING} en cours...]"
 if [ "$(id -u)" -ne 0 ]; then
   sudo cp whisperx_cli /usr/local/bin/whisperx_cli
@@ -183,24 +198,69 @@ chmod +x /usr/local/bin/whisperx_cli
 WRAPPER_INSTALLED=1
 echo -e "\r${DONE} ${BOLD}Installation globale de 'whisperx_cli'${RESET} [${DONE} terminé]"
 
-# --- Documentation d'utilisation ---
-echo -e "\n${BOLD}Documentation d'utilisation de 'whisperx_cli':${RESET}"
-echo "---------------------------------------------------------"
-echo "Syntaxe de base :"
-echo "  whisperx_cli [audio_file] [OPTIONS]"
-echo ""
-echo "Paramètres :"
-echo "  audio_file          : Chemin vers le fichier audio (ex : audio.mp3)"
-echo "  --model MODEL       : Modèle WhisperX à utiliser (default : large-v3)"
-echo "  --language LANG     : Code langue (ex : fr, en, etc.). Si non spécifié, le langage est détecté automatiquement."
-echo "  --hf_token TOKEN    : Token Hugging Face (requis pour activer la diarization)"
-echo "  --diarize           : Active la diarization (nécessite --hf_token)"
-echo "  --batch_size N      : Taille du batch pour la transcription (default : 4)"
-echo "  --compute_type TYPE : Type de calcul (ex : float16 pour GPU, int8 pour réduire l'utilisation de la mémoire GPU)"
-echo "  --output FILE       : Fichier de sortie (default : transcription.json)"
-echo "  --output_format FMT : Format de sortie : json, txt ou srt (default : json)"
-echo ""
-echo "Exemple d'utilisation :"
-echo "  whisperx_cli audio.mp3 --model large-v3 --language fr --hf_token YOUR_TOKEN --diarize --output sous_titres.srt --output_format srt"
-echo "---------------------------------------------------------"
-echo -e "\n${DONE} ${BOLD}Setup complet.${RESET} Vous pouvez lancer vos transcriptions depuis n'importe où avec la commande 'whisperx_cli'."
+echo -e "\n${DONE} ${BOLD}Partie 1 terminée.${RESET} Vous pouvez lancer vos transcriptions via la commande 'whisperx_cli'."
+
+# --- PARTIE 2 : Installation et lancement de whisper-api ---
+
+echo -e "\n${BOLD}=== Partie 2 : Configuration de whisper-api ===${RESET}"
+
+# Définir le répertoire du projet API
+API_REPO_URL="https://github.com/fchevallieratecna/whisper-api.git"
+API_REPO_DIR="whisper-api"
+
+# 14. Cloner le dépôt whisper-api (si nécessaire)
+if [ ! -d "$API_REPO_DIR" ]; then
+  echo -e "${LOADING} ${BOLD}Clonage du dépôt whisper-api depuis GitHub${RESET} [${LOADING} en cours...]"
+  git clone "$API_REPO_URL" > /dev/null 2>&1
+  echo -e "\r${DONE} ${BOLD}Clonage du dépôt whisper-api depuis GitHub${RESET} [${DONE} terminé]"
+else
+  echo -e "${DONE} ${BOLD}Dépôt whisper-api déjà cloné${RESET}"
+fi
+
+cd "$API_REPO_DIR" || exit
+
+# Récupérer le chemin absolu du répertoire API
+API_PATH="$(pwd)"
+
+# 15. Installation de pm2 globalement (si nécessaire)
+echo -ne "${LOADING} ${BOLD}Installation de pm2 (npm install -g pm2)${RESET} [${LOADING} en cours...]"
+if ! command -v pm2 >/dev/null 2>&1; then
+  sudo npm install -g pm2 > /dev/null 2>&1
+fi
+echo -e "\r${DONE} ${BOLD}Installation de pm2${RESET} [${DONE} terminé]"
+
+# 16. Installation des dépendances du projet API
+run_step "Installation des dépendances de whisper-api (npm install)" npm install
+
+# 17. Construction du projet (npm run build)
+run_step "Construction du projet whisper-api (npm run build)" npm run build
+
+# 18. Lancement de whisper-api avec pm2
+echo -ne "${LOADING} ${BOLD}Lancement de whisper-api avec pm2 (npm start)${RESET} [${LOADING} en cours...]"
+UPLOAD_PATH=/tmp pm2 start npm --name "whisper-api" -- start > /dev/null 2>&1
+echo -e "\r${DONE} ${BOLD}Lancement de whisper-api avec pm2${RESET} [${DONE} terminé]"
+
+# 19. Création du script de mise à jour de whisper-api
+echo -ne "${LOADING} ${BOLD}Création du script de mise à jour de whisper-api${RESET} [${LOADING} en cours...]"
+cat > whisper_api_update << EOF
+#!/bin/bash
+# Script de mise à jour de whisper-api
+API_PATH="${API_PATH}"
+cd "\$API_PATH" || exit 1
+echo "Mise à jour de whisper-api..."
+git pull
+npm install
+npm run build
+pm2 restart whisper-api
+EOF
+chmod +x whisper_api_update
+# Copier le script dans /usr/local/bin pour un accès global
+if [ "$(id -u)" -ne 0 ]; then
+  sudo cp whisper_api_update /usr/local/bin/whisper_api_update
+else
+  cp whisper_api_update /usr/local/bin/whisper_api_update
+fi
+echo -e "\r${DONE} ${BOLD}Création du script de mise à jour de whisper-api${RESET} [${DONE} terminé]"
+
+echo -e "\n${DONE} ${BOLD}Partie 2 terminée.${RESET} Le projet whisper-api est lancé via pm2."
+echo -e "\n${DONE} ${BOLD}Setup complet.${RESET} Vous pouvez lancer vos transcriptions avec 'whisperx_cli' et mettre à jour l'API avec 'whisper_api_update'."
