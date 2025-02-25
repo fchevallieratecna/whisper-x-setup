@@ -224,9 +224,12 @@ echo -ne "${LOADING} ${BOLD}Installation de pm2 (npm install -g pm2)${RESET} [${
 if ! command -v pm2 >/dev/null 2>&1; then
   sudo npm install -g pm2 > /dev/null 2>&1
 fi
-# Mettre à jour le PATH pour s'assurer que /usr/local/bin est inclus
-export PATH=$PATH:/usr/local/bin
-echo -e "\r${DONE} ${BOLD}Installation de pm2${RESET} [${DONE} terminé]"
+# Récupérer le répertoire global des binaires npm et mettre à jour le PATH
+GLOBAL_NPM_BIN="$(npm config get prefix)/bin"
+export PATH="$PATH:$GLOBAL_NPM_BIN"
+
+if ! command -v pm2 >/dev/null 2>&1; then
+  echo -e "\r❌ ${BOLD}pm2 n'est toujours pas trouvé dans le PATH. Veuillez vérifier l'installation de pm2.${RESET}"
 
 # 16. Installation des dépendances du projet API
 run_step "Installation des dépendances de whisper-api (npm install)" npm install
