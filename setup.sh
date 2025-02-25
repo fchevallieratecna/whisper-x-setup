@@ -10,7 +10,7 @@
 #
 # PARTIE 2 : Installation et lancement de whisper-api
 #   - Clone le dépôt whisper-api (si nécessaire)
-#   - Installe PM2 (globalement) si besoin
+#   - Installe PM2 globalement (via npm) et met à jour le PATH pour s'assurer que PM2 est accessible
 #   - Exécute "npm install" puis "npm run build"
 #   - Lance le projet avec PM2 en utilisant UPLOAD_PATH=/tmp
 #   - Crée un script de mise à jour (whisper_api_update) pour actualiser l'API
@@ -147,7 +147,6 @@ echo -e "\r${DONE} ${BOLD}Activation de l'environnement virtuel${RESET} [${DONE}
 run_step "Mise à jour de pip" pip install --upgrade pip
 
 # 7. Installation de PyTorch, torchvision et torchaudio pour CUDA 12.4
-# (Cette étape peut prendre plusieurs minutes)
 run_step "Installation de PyTorch, torchvision et torchaudio pour CUDA 12.4 (peut prendre plusieurs minutes)" \
          pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu124
 
@@ -157,7 +156,7 @@ run_step "Installation de WhisperX" pip install whisperx
 # Récupérer le chemin absolu du répertoire cloné
 ABS_PATH="$(pwd)"
 
-# Création du wrapper exécutable 'whisperx_cli'
+# 9. Création du wrapper exécutable 'whisperx_cli'
 run_step "Création du wrapper exécutable 'whisperx_cli'" bash -c "cat <<EOF > whisperx_cli
 #!/bin/bash
 source \"${ABS_PATH}/whisperx_env/bin/activate\"
@@ -225,6 +224,8 @@ echo -ne "${LOADING} ${BOLD}Installation de pm2 (npm install -g pm2)${RESET} [${
 if ! command -v pm2 >/dev/null 2>&1; then
   sudo npm install -g pm2 > /dev/null 2>&1
 fi
+# Mettre à jour le PATH pour s'assurer que /usr/local/bin est inclus
+export PATH=$PATH:/usr/local/bin
 echo -e "\r${DONE} ${BOLD}Installation de pm2${RESET} [${DONE} terminé]"
 
 # 16. Installation des dépendances du projet API
@@ -252,7 +253,6 @@ npm run build
 pm2 restart whisper-api
 EOF
 chmod +x whisper_api_update
-# Copier le script dans /usr/local/bin pour un accès global
 if [ "$(id -u)" -ne 0 ]; then
   sudo cp whisper_api_update /usr/local/bin/whisper_api_update
 else
