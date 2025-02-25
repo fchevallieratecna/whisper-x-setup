@@ -1,30 +1,11 @@
 #!/bin/bash
 # Nom du script : setup.sh
 # Ce script clone le dépôt (si nécessaire), demande le token HF, configure l'environnement virtuel,
-# installe les dépendances, crée le wrapper et lance un test final de transcription.
-# Il vérifie également que nvidia-smi fonctionne et copie le wrapper dans /usr/local/bin
-# pour que la commande 'whisperx_cli' soit accessible globalement.
+# installe les dépendances, crée le wrapper, lance un test final et, en cas d'interruption (Ctrl+C),
+# annule les changements effectués.
 #
-# Usage du script :
-#   ./setup.sh [-v]
-#     -v : mode verbose (affiche les sorties des commandes)
-#
-# Une fois l'installation terminée, vous pouvez lancer vos transcriptions via :
-#   whisperx_cli [audio_file] [OPTIONS]
-#
-# Options principales de whisperx_cli (passées à whisperx_cli.py) :
-#   audio_file          : chemin vers le fichier audio (ex : audio.mp3)
-#   --model MODEL       : modèle WhisperX à utiliser (default : large-v3)
-#   --language LANG     : code langue (ex : fr, en, etc.). Si non spécifié, le langage est détecté automatiquement.
-#   --hf_token TOKEN    : token Hugging Face (requis pour activer la diarization)
-#   --diarize           : active la diarization (nécessite --hf_token)
-#   --batch_size N      : taille du batch pour la transcription (default : 4)
-#   --compute_type TYPE : type de calcul (ex : float16 pour GPU, int8 pour réduire l'utilisation de la mémoire GPU)
-#   --output FILE       : fichier de sortie (default : transcription.json)
-#   --output_format FMT : format de sortie : json, txt ou srt (default : json)
-#
-# Exemple :
-#   whisperx_cli audio.mp3 --model large-v3 --language fr --hf_token VOTRE_TOKEN --diarize --output sous_titres.srt --output_format srt
+# Usage : ./setup.sh [-v]
+#   -v : mode verbose (affiche les sorties des commandes)
 #
 # Rendre exécutable avec : chmod +x setup.sh
 
@@ -39,6 +20,37 @@ VERBOSE=0
 if [ "$1" == "-v" ]; then
   VERBOSE=1
 fi
+
+# --- Indicateurs pour rollback ---
+CLONED=0
+ENV_CREATED=0
+WRAPPER_INSTALLED=0
+
+# --- Fonction de nettoyage en cas d'interruption ---
+cleanup() {
+  echo -e "\n${BOLD}Interruption détectée, annulation de l'installation...${RESET}"
+  if [ $ENV_CREATED -eq 1 ]; then
+    echo "Suppression de l'environnement virtuel..."
+    rm -rf whisperx_env
+  fi
+  if [ $CLONED -eq 1 ]; then
+    cd .. && rm -rf "$REPO_DIR"
+    echo "Suppression du dépôt cloné..."
+  fi
+  if [ $WRAPPER_INSTALLED -eq 1 ]; then
+    echo "Suppression du wrapper installé globalement..."
+    if [ "$(id -u)" -ne 0 ]; then
+      sudo rm -f /usr/local/bin/whisperx_cli
+    else
+      rm -f /usr/local/bin/whisperx_cli
+    fi
+  fi
+  exit 1
+}
+trap cleanup SIGINT
+
+# --- Demande du token Hugging Face dès le début ---
+read -p "Veuillez entrer votre token Hugging Face (pour la diarization) ou appuyez sur Entrée pour l'ignorer : " HF_TOKEN
 
 # --- Fonction de log et d'exécution d'une étape ---
 run_step() {
@@ -56,8 +68,6 @@ run_step() {
 # --- Vérification de CUDA 12.4 via nvcc et nvidia-smi ---
 check_cuda() {
   echo -ne "${LOADING} ${BOLD}Vérification de CUDA 12.4${RESET} [${LOADING} en cours...]"
-
-  # Vérifier la présence de nvcc et extraire la version
   if command -v nvcc >/dev/null 2>&1; then
     CUDA_VERSION=$(nvcc --version | grep -o "release [0-9]*\.[0-9]*" | head -n1 | cut -d' ' -f2)
   elif [ -f "/usr/local/cuda/version.txt" ]; then
@@ -66,7 +76,6 @@ check_cuda() {
     CUDA_VERSION=""
   fi
 
-  # Vérifier également nvidia-smi
   if ! command -v nvidia-smi >/dev/null 2>&1 || ! nvidia-smi >/dev/null 2>&1; then
     echo -e "\r❌ ${BOLD}Vérification de CUDA 12.4${RESET} [${BOLD}ERREUR${RESET}]"
     echo "nvidia-smi ne fonctionne pas ou n'est pas installé."
@@ -82,10 +91,6 @@ check_cuda() {
   fi
 }
 
-# --- Demande du token Hugging Face dès le début ---
-echo -n "Veuillez entrer votre token Hugging Face (pour la diarization) ou appuyez sur Entrée pour l'ignorer : "
-read -r HF_TOKEN
-
 # --- URL et nom du dépôt à cloner ---
 REPO_URL="https://github.com/fchevallieratecna/whisper-x-setup.git"
 REPO_DIR="whisper-x-setup"
@@ -96,12 +101,12 @@ REPO_DIR="whisper-x-setup"
 if [ ! -d "$REPO_DIR" ]; then
   echo -e "${LOADING} ${BOLD}Clonage du dépôt depuis GitHub${RESET} [${LOADING} en cours...]"
   git clone "$REPO_URL" > /dev/null 2>&1
+  CLONED=1
   echo -e "\r${DONE} ${BOLD}Clonage du dépôt depuis GitHub${RESET} [${DONE} terminé]"
 else
   echo -e "${DONE} ${BOLD}Dépôt déjà cloné${RESET}"
 fi
 
-# Se placer dans le dossier cloné
 cd "$REPO_DIR" || exit
 
 # 2. Vérifier la présence du fichier Python
@@ -118,6 +123,7 @@ check_cuda
 
 # 4. Création de l'environnement virtuel
 run_step "Création de l'environnement virtuel 'whisperx_env'" python3 -m venv whisperx_env
+ENV_CREATED=1
 
 # 5. Activation de l'environnement virtuel (reste dans le shell courant)
 echo -ne "${LOADING} ${BOLD}Activation de l'environnement virtuel${RESET} [${LOADING} en cours...]"
@@ -172,6 +178,7 @@ else
   cp whisperx_cli /usr/local/bin/whisperx_cli
 fi
 chmod +x /usr/local/bin/whisperx_cli
+WRAPPER_INSTALLED=1
 echo -e "\r${DONE} ${BOLD}Installation globale de 'whisperx_cli'${RESET} [${DONE} terminé]"
 
 # --- Documentation d'utilisation ---
