@@ -155,14 +155,13 @@ run_step "Installation de PyTorch, torchvision et torchaudio pour CUDA 12.4 (peu
 run_step "Installation de WhisperX" pip install whisperx
 
 # Récupérer le chemin absolu du répertoire cloné
-REPO_PATH="$(pwd)"
+ABS_PATH="$(pwd)"
 
-# Créer le fichier wrapper avec le chemin en dur
+# Création du wrapper exécutable 'whisperx_cli'
 run_step "Création du wrapper exécutable 'whisperx_cli'" bash -c "cat <<EOF > whisperx_cli
 #!/bin/bash
-# Wrapper pour lancer 'whisperx_cli.py' dans l'environnement virtuel
-source \"${REPO_PATH}/whisperx_env/bin/activate\"
-python \"${REPO_PATH}/whisperx_cli.py\" \"\$@\"
+source \"${ABS_PATH}/whisperx_env/bin/activate\"
+python \"${ABS_PATH}/whisperx_cli.py\" \"\$@\"
 EOF"
 chmod +x whisperx_cli
 
