@@ -1,6 +1,16 @@
+import os
+import logging
+import warnings
+
+# Réduire les logs externes
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+logging.getLogger("speechbrain").setLevel(logging.ERROR)
+logging.getLogger("pytorch_lightning").setLevel(logging.ERROR)
+logging.getLogger("pyannote.audio").setLevel(logging.ERROR)
+warnings.filterwarnings("ignore")
+
 import argparse
 import json
-import os
 import whisperx
 
 def seconds_to_srt_time(seconds: float) -> str:
@@ -35,6 +45,7 @@ def save_srt(output_path, segments):
             f.write(f"{idx}\n{start_time} --> {end_time}\n{text}\n\n")
 
 def main():
+    # Valeurs par défaut
     default_values = {
         "model": "large-v3",
         "diarize": True,
@@ -47,7 +58,6 @@ def main():
     )
     parser.add_argument("audio_file", type=str, help="Chemin vers le fichier audio")
     parser.add_argument("--model", type=str, default=default_values["model"], help="Modèle WhisperX (default: large-v3)")
-    # Pour activer ou désactiver la diarization, on utilise un système de flag opposé
     parser.add_argument("--diarize", dest="diarize", action="store_true", default=default_values["diarize"],
                         help="Active la diarization (default: activée)")
     parser.add_argument("--no-diarize", dest="diarize", action="store_false", help="Désactive la diarization")
@@ -75,15 +85,14 @@ def main():
             print(f"   - {key:<15}: {val} (default)")
         else:
             print(f"   - {key:<15}: {val} (overridden)")
-    # Pour output_format et output, on affiche
     if args.output_format == default_values["output_format"]:
         print(f"   - output_format   : {args.output_format} (default)")
     else:
         print(f"   - output_format   : {args.output_format} (overridden)")
-    # Afficher output file
     print(f"   - output          : {args.output} (default if not specified)")
+    print("")
 
-    print("\n>> Démarrage de la transcription")
+    print(">> Démarrage de la transcription")
     try:
         print("   -> Chargement du modèle...")
         device = "cuda"
@@ -116,9 +125,17 @@ def main():
         return
 
     if args.diarize:
+        # Si aucun token n'est fourni, demander interactivement
         if not args.hf_token:
-            print("   !! Erreur: Token Hugging Face requis pour la diarization")
-            return
+            try:
+                token_input = input("   -> Token Hugging Face requis pour la diarization. Veuillez le saisir : ")
+                args.hf_token = token_input.strip()
+            except Exception as e:
+                print("   !! Erreur lors de la saisie du token :", e)
+                return
+            if not args.hf_token:
+                print("   !! Erreur: Aucun token fourni. La diarization ne peut être effectuée.")
+                return
         try:
             print("   -> Exécution de la diarization...")
             diarize_model = whisperx.DiarizationPipeline(use_auth_token=args.hf_token, device=device)
@@ -142,6 +159,6 @@ def main():
         return
 
     print(">> Transcription terminée avec succès.")
-    
+
 if __name__ == "__main__":
     main()
