@@ -125,7 +125,6 @@ def main():
             args.model,
             device,
             compute_type=args.compute_type,
-            language=args.language,      # Passage de la langue ici
             asr_options=asr_options
         )
     except Exception as e:
