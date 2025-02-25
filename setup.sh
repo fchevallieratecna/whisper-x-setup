@@ -163,7 +163,7 @@ run_step "Création du wrapper exécutable 'whisperx_cli'" bash -c "cat > whispe
 # Wrapper pour lancer 'whisperx_cli.py' dans l'environnement virtuel
 REPO_PATH=\"${REPO_PATH}\"
 source \"\${REPO_PATH}/whisperx_env/bin/activate\"
-python \"\${REPO_PATH}/whisperx_cli.py\" \"\$@\"
+python \"\${REPO_PATH}/whisperx_cli.py\" \"\\\$@\"
 EOF"
 chmod +x whisperx_cli
 
