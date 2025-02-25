@@ -10,7 +10,7 @@
 #
 # PARTIE 2 : Installation et lancement de whisper-api
 #   - Clone le dépôt whisper-api (si nécessaire)
-#   - Installe PM2 globalement (via npm) et met à jour le PATH pour s'assurer que PM2 est accessible
+#   - Installe PM2 globalement via npm et met à jour le PATH pour s'assurer que PM2 est accessible
 #   - Exécute "npm install" puis "npm run build"
 #   - Lance le projet avec PM2 en utilisant UPLOAD_PATH=/tmp
 #   - Crée un script de mise à jour (whisper_api_update) pour actualiser l'API
@@ -36,6 +36,18 @@ fi
 CLONED=0
 ENV_CREATED=0
 WRAPPER_INSTALLED=0
+
+# --- Fonction de vérification de libcudnn ---
+check_libcudnn() {
+  echo -ne "${LOADING} ${BOLD}Vérification de libcudnn_ops_infer.so.8${RESET} [${LOADING} en cours...]"
+  if ldconfig -p | grep -q "libcudnn_ops_infer.so.8"; then
+    echo -e "\r${DONE} ${BOLD}libcudnn_ops_infer.so.8 trouvé${RESET}"
+  else
+    echo -e "\r❌ ${BOLD}libcudnn_ops_infer.so.8 non trouvé${RESET}"
+    echo "Veuillez installer libcudnn (par exemple, 'apt update && apt install -y libcudnn8 libcudnn8-dev libcudnn8-samples') ou configurer LD_LIBRARY_PATH pour inclure le dossier contenant libcudnn_ops_infer.so.8."
+    exit 1
+  fi
+}
 
 # --- Fonction de nettoyage en cas d'interruption ---
 cleanup() {
@@ -134,6 +146,10 @@ fi
 # 3. Vérification de CUDA 12.4 et de nvidia-smi
 check_cuda
 
+# 3.5. Vérification de libcudnn
+check_libcudnn
+
+
 # 4. Création de l'environnement virtuel
 run_step "Création de l'environnement virtuel 'whisperx_env'" python3 -m venv whisperx_env
 ENV_CREATED=1
@@ -198,9 +214,21 @@ echo -e "\r${DONE} ${BOLD}Installation globale de 'whisperx_cli'${RESET} [${DONE
 echo -e "\n${DONE} ${BOLD}Partie 1 terminée.${RESET} Vous pouvez lancer vos transcriptions via la commande 'whisperx_cli'."
 
 # --- PARTIE 2 : Installation et lancement de whisper-api ---
-
 echo -e "\n${BOLD}=== Partie 2 : Configuration de whisper-api ===${RESET}"
 
+# Vérifier que Node.js est installé
+if ! command -v node >/dev/null 2>&1; then
+  echo -e "\n❌ ${BOLD}Erreur : Node.js n'est pas installé. Veuillez installer Node.js et npm avant de poursuivre.${RESET}"
+  echo -e "\n${BOLD}Installation de Node.js et npm via nvm${RESET}"
+  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.1/install.sh | bash
+  echo -e "\n${DONE} ${BOLD}Installation de Node.js et npm via nvm terminée.${RESET}"
+  # Installation de node 22 + alias default
+  nvm install 22
+  nvm alias default 22
+  echo -e "\n${DONE} ${BOLD}Installation de Node.js et npm via nvm terminée.${RESET}"
+  echo -e "\n${BOLD}Veuillez fermer et rouvrir le terminal, puis relancer le script.${RESET}"
+  exit 1
+fi
 # Définir le répertoire du projet API
 API_REPO_URL="https://github.com/fchevallieratecna/whisper-api.git"
 API_REPO_DIR="whisper-api"
@@ -221,15 +249,31 @@ API_PATH="$(pwd)"
 
 # 15. Installation de pm2 globalement (si nécessaire)
 echo -ne "${LOADING} ${BOLD}Installation de pm2 (npm install -g pm2)${RESET} [${LOADING} en cours...]"
-if ! command -v pm2 >/dev/null 2>&1; then
-  sudo npm install -g pm2 > /dev/null 2>&1
+NPM_BIN="$(which npm)"
+if [ -z "$NPM_BIN" ]; then
+  echo -e "\n❌ ${BOLD}npm n'est pas trouvé. Veuillez installer Node.js et npm.${RESET}"
+  exit 1
 fi
+
+if ! command -v pm2 >/dev/null 2>&1; then
+  # Si npm est installé via nvm, il est généralement dans un chemin contenant "nvm"
+  if echo "$NPM_BIN" | grep -qi "nvm"; then
+    "$NPM_BIN" install -g pm2
+  else
+    sudo "$NPM_BIN" install -g pm2
+  fi
+fi
+
 # Récupérer le répertoire global des binaires npm et mettre à jour le PATH
-GLOBAL_NPM_BIN="$(npm config get prefix)/bin"
+GLOBAL_NPM_BIN="$("$NPM_BIN" config get prefix)/bin"
 export PATH="$PATH:$GLOBAL_NPM_BIN"
 
 if ! command -v pm2 >/dev/null 2>&1; then
-  echo -e "\r❌ ${BOLD}pm2 n'est toujours pas trouvé dans le PATH. Veuillez vérifier l'installation de pm2.${RESET}"
+  echo -e "\n❌ ${BOLD}pm2 n'est toujours pas trouvé dans le PATH. Veuillez vérifier l'installation de pm2.${RESET}"
+  exit 1
+fi
+echo -e "\r${DONE} ${BOLD}Installation de pm2${RESET} [${DONE} terminé]"
+
 
 # 16. Installation des dépendances du projet API
 run_step "Installation des dépendances de whisper-api (npm install)" npm install
@@ -237,14 +281,14 @@ run_step "Installation des dépendances de whisper-api (npm install)" npm instal
 # 17. Construction du projet (npm run build)
 run_step "Construction du projet whisper-api (npm run build)" npm run build
 
-# 18. Lancement de whisper-api avec pm2
+# 18. Lancement de whisper-api avec pm2 (en définissant UPLOAD_PATH=/tmp)
 echo -ne "${LOADING} ${BOLD}Lancement de whisper-api avec pm2 (npm start)${RESET} [${LOADING} en cours...]"
 UPLOAD_PATH=/tmp pm2 start npm --name "whisper-api" -- start > /dev/null 2>&1
 echo -e "\r${DONE} ${BOLD}Lancement de whisper-api avec pm2${RESET} [${DONE} terminé]"
 
 # 19. Création du script de mise à jour de whisper-api
 echo -ne "${LOADING} ${BOLD}Création du script de mise à jour de whisper-api${RESET} [${LOADING} en cours...]"
-cat > whisper_api_update << EOF
+cat <<EOF > whisper_api_update
 #!/bin/bash
 # Script de mise à jour de whisper-api
 API_PATH="${API_PATH}"
