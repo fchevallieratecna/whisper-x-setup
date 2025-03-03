@@ -99,6 +99,8 @@ def main():
                         help="Output format (default: txt)")
     parser.add_argument("--debug", action="store_true", default=False,
                         help="Enable debug mode (display all logs)")
+    parser.add_argument("--nb_speaker", type=int, default=None, 
+                        help="Exact number of speakers (sets both min_speakers and max_speakers)")
     args = parser.parse_args()
 
     # Set default output if not provided
@@ -162,7 +164,14 @@ def main():
         try:
             print("   -> Running diarization...")
             diarize_model = maybe_call(whisperx.DiarizationPipeline, args.debug, use_auth_token=args.hf_token, device=device)
-            diarize_segments = maybe_call(diarize_model, args.debug, audio)
+            if args.nb_speaker is not None:
+                diarize_segments = maybe_call(
+                    diarize_model, args.debug, audio, min_speakers=args.nb_speaker, max_speakers=args.nb_speaker
+                )
+            else:
+                diarize_segments = maybe_call(
+                    diarize_model, args.debug, audio, min_speakers=args.min_speakers, max_speakers=args.max_speakers
+                )
             result_aligned = whisperx.assign_word_speakers(diarize_segments, result_aligned)
         except Exception as e:
             if "token" in str(e).lower():
