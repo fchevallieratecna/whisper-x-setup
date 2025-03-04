@@ -186,9 +186,9 @@ deactivate 2>/dev/null
 # 11. Lancement du test final via le wrapper (hors du venv courant)
 echo -ne "${LOADING} ${BOLD}Test final : transcription sur 'audio.mp3'${RESET} [${LOADING} en cours...]"
 if [ -n "$HF_TOKEN" ]; then
-  ./whisperx_cli audio.mp3 --model large-v3 --language fr --hf_token "$HF_TOKEN" --diarize --output test_output.srt --output_format srt > /dev/null 2>&1
+  ./whisperx_cli audio.mp3 --model large-v3 --language fr --hf_token "$HF_TOKEN" --diarize --output test_output.srt --output_format srt --nb_speakers 1 > /dev/null 2>&1
 else
-  ./whisperx_cli audio.mp3 --model large-v3 --language fr --output test_output.srt --output_format srt > /dev/null 2>&1
+  ./whisperx_cli audio.mp3 --model large-v3 --language fr --output test_output.srt --output_format srt --nb_speakers 1 > /dev/null 2>&1
 fi
 echo -e "\r${DONE} ${BOLD}Test final : transcription sur 'audio.mp3'${RESET} [${DONE} terminé]"
 
