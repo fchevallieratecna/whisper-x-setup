@@ -3,6 +3,12 @@ import sys
 import io
 import logging
 import warnings
+import platform
+
+# Forcer l'utilisation du CPU sur macOS
+if platform.system() == "Darwin":
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""
+    os.environ["HF_DATASETS_OFFLINE"] = "1"
 
 # Suppress external logs unless debug is enabled (will be set later)
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
@@ -112,29 +118,43 @@ def main():
     # Display used parameters
     print(">> Parameters used:")
     print(f"   - audio_file     : {args.audio_file}")
-    for key in default_values:
-        val = getattr(args, key)
-        if val == default_values[key]:
-            print(f"   - {key:<15}: {val} (default)")
+
+    # Afficher tous les paramètres
+    all_params = vars(args)
+    for key, val in all_params.items():
+        if key == 'audio_file':
+            continue  # Déjà affiché
+        
+        # Vérifier si le paramètre est dans default_values
+        if key in default_values:
+            if val == default_values[key]:
+                print(f"   - {key:<15}: {val} (default)")
+            else:
+                print(f"   - {key:<15}: {val} (overridden)")
         else:
-            print(f"   - {key:<15}: {val} (overridden)")
-    print(f"   - output_format  : {args.output_format} (default)" if args.output_format == default_values["output_format"]
-          else f"   - output_format  : {args.output_format} (overridden)")
-    print(f"   - output         : {args.output} (default if not specified)")
-    print(f"   - initial_prompt : '{args.initial_prompt}' (default)" if args.initial_prompt == "" else f"   - initial_prompt : '{args.initial_prompt}' (overridden)")
-    print("   - debug          :", args.debug)
+            # Pour les paramètres qui n'ont pas de valeur par défaut dans default_values
+            print(f"   - {key:<15}: {val}")
+
+    # Ajouter l'information sur le device
+    print(f"   - device         : {'cpu' if platform.system() == 'Darwin' else 'cuda'} (auto-detected)")
     print("")
 
     print(">> Starting transcription")
     try:
         print("   -> Loading model...")
-        device = "cuda"
+        # Toujours utiliser CPU sur macOS
+        device = "cpu" if platform.system() == "Darwin" else "cuda"
         asr_options = {"initial_prompt": args.initial_prompt}
+        
+        # Afficher les paramètres de chargement pour le débogage
+        print(f"   -> Using device: {device}, compute_type: {args.compute_type}")
+        
         # Pass language directly
         model = maybe_call(whisperx.load_model, args.debug, args.model, device,
                            compute_type=args.compute_type, language=args.language, asr_options=asr_options)
     except Exception as e:
         print("   !! Error loading model:", e)
+        print("   !! Sur macOS, essayez avec --compute_type int8")
         return
 
     try:

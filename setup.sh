@@ -21,16 +21,40 @@
 # Rendre exécutable avec : chmod +x setup.sh
 
 # --- Variables d'affichage ---
-BOLD="\e[1m"
-RESET="\e[0m"
-LOADING="⏳"
-DONE="✅"
-
-# --- Mode verbose ---
-VERBOSE=0
-if [ "$1" == "-v" ]; then
-  VERBOSE=1
+if [[ "$(uname)" == "Darwin" ]]; then
+  BOLD="\033[1m"
+  RESET="\033[0m"
+  LOADING="..."
+  DONE="✓"
+else
+  BOLD="\e[1m"
+  RESET="\e[0m"
+  LOADING="⏳"
+  DONE="✅"
 fi
+
+# --- Mode verbose et options ---
+VERBOSE=0
+ONLY_API=0
+
+# Traitement des arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -v|--verbose)
+      VERBOSE=1
+      shift
+      ;;
+    --only-api)
+      ONLY_API=1
+      shift
+      ;;
+    *)
+      echo "Option non reconnue: $1"
+      echo "Usage: ./setup.sh [-v|--verbose] [--only-api]"
+      exit 1
+      ;;
+  esac
+done
 
 # --- Indicateurs pour rollback ---
 CLONED=0
@@ -39,6 +63,12 @@ WRAPPER_INSTALLED=0
 
 # --- Fonction de vérification de libcudnn ---
 check_libcudnn() {
+  # Vérifier si on est sur macOS
+  if [[ "$(uname)" == "Darwin" ]]; then
+    echo -e "${DONE} ${BOLD}Système macOS détecté, vérification libcudnn ignorée${RESET}"
+    return 0
+  fi
+  
   echo -ne "${LOADING} ${BOLD}Vérification de libcudnn_ops_infer.so.8${RESET} [${LOADING} en cours...]"
   if ldconfig -p | grep -q "libcudnn_ops_infer.so.8"; then
     echo -e "\r${DONE} ${BOLD}libcudnn_ops_infer.so.8 trouvé${RESET}"
@@ -72,9 +102,6 @@ cleanup() {
 }
 trap cleanup SIGINT
 
-# --- Demande du token Hugging Face dès le début ---
-read -p "Veuillez entrer votre token Hugging Face (pour la diarization) ou appuyez sur Entrée pour l'ignorer : " HF_TOKEN
-
 # --- Fonction de log et d'exécution d'une étape ---
 run_step() {
   local description="$1"
@@ -90,6 +117,12 @@ run_step() {
 
 # --- Vérification de CUDA 12.4 via nvcc et nvidia-smi ---
 check_cuda() {
+  # Vérifier si on est sur macOS
+  if [[ "$(uname)" == "Darwin" ]]; then
+    echo -e "${DONE} ${BOLD}Système macOS détecté, vérification CUDA ignorée${RESET}"
+    return 0
+  fi
+
   echo -ne "${LOADING} ${BOLD}Vérification de CUDA 12.4${RESET} [${LOADING} en cours...]"
   if command -v nvcc >/dev/null 2>&1; then
     CUDA_VERSION=$(nvcc --version | grep -o "release [0-9]*\.[0-9]*" | head -n1 | cut -d' ' -f2)
@@ -115,103 +148,158 @@ check_cuda() {
 }
 
 # --- PARTIE 1 : Installation de WhisperX CLI ---
+if [ $ONLY_API -eq 0 ]; then
+  echo -e "\n${BOLD}=== Partie 1 : Configuration de WhisperX CLI ===${RESET}"
 
-echo -e "\n${BOLD}=== Partie 1 : Configuration de WhisperX CLI ===${RESET}"
-
-# URL et nom du dépôt whisper-x-setup
-REPO_URL="https://github.com/fchevallieratecna/whisper-x-setup.git"
-REPO_DIR="whisper-x-setup"
-
-# 1. Cloner le dépôt (si nécessaire)
-if [ ! -d "$REPO_DIR" ]; then
-  echo -e "${LOADING} ${BOLD}Clonage du dépôt depuis GitHub${RESET} [${LOADING} en cours...]"
-  git clone "$REPO_URL" > /dev/null 2>&1
-  CLONED=1
-  echo -e "\r${DONE} ${BOLD}Clonage du dépôt depuis GitHub${RESET} [${DONE} terminé]"
-else
-  echo -e "${DONE} ${BOLD}Dépôt déjà cloné${RESET}"
-fi
-
-cd "$REPO_DIR" || exit
-
-# 2. Vérifier la présence du fichier Python
-if [ ! -f "whisperx_cli.py" ]; then
-  echo -e "\n❌ ${BOLD}Erreur${RESET}: Le fichier 'whisperx_cli.py' est introuvable dans $(pwd)."
-  echo "Veuillez vérifier la structure de votre dépôt."
-  exit 1
-else
-  echo -e "${DONE} ${BOLD}Fichier 'whisperx_cli.py' trouvé${RESET}"
-fi
-
-# 3. Vérification de CUDA 12.4 et de nvidia-smi
-check_cuda
-
-# 3.5. Vérification de libcudnn
-check_libcudnn
+  # --- Demande du token Hugging Face dès le début ---
+  read -p "Veuillez entrer votre token Hugging Face (pour la diarization) ou appuyez sur Entrée pour l'ignorer : " HF_TOKEN
 
 
-# 4. Création de l'environnement virtuel
-run_step "Création de l'environnement virtuel 'whisperx_env'" python3 -m venv whisperx_env
-ENV_CREATED=1
+  # URL et nom du dépôt whisper-x-setup
+  REPO_URL="https://github.com/fchevallieratecna/whisper-x-setup.git"
+  REPO_DIR="whisper-x-setup"
 
-# 5. Activation de l'environnement virtuel (dans ce shell)
-echo -ne "${LOADING} ${BOLD}Activation de l'environnement virtuel${RESET} [${LOADING} en cours...]"
-source whisperx_env/bin/activate
-echo -e "\r${DONE} ${BOLD}Activation de l'environnement virtuel${RESET} [${DONE} terminé]"
+  # 1. Cloner le dépôt (si nécessaire)
+  if [ ! -d "$REPO_DIR" ]; then
+    echo -e "${LOADING} ${BOLD}Clonage du dépôt depuis GitHub${RESET} [${LOADING} en cours...]"
+    git clone "$REPO_URL" > /dev/null 2>&1
+    CLONED=1
+    echo -e "\r${DONE} ${BOLD}Clonage du dépôt depuis GitHub${RESET} [${DONE} terminé]"
+  else
+    echo -e "${DONE} ${BOLD}Dépôt déjà cloné${RESET}"
+  fi
 
-# 6. Mise à jour de pip
-run_step "Mise à jour de pip" pip install --upgrade pip
+  cd "$REPO_DIR" || exit
 
-# 7. Installation de PyTorch, torchvision et torchaudio pour CUDA 12.4
-run_step "Installation de PyTorch, torchvision et torchaudio pour CUDA 12.4 (peut prendre plusieurs minutes)" \
-         pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu124
+  # 2. Vérifier la présence du fichier Python
+  if [ ! -f "whisperx_cli.py" ]; then
+    echo -e "\n❌ ${BOLD}Erreur${RESET}: Le fichier 'whisperx_cli.py' est introuvable dans $(pwd)."
+    echo "Veuillez vérifier la structure de votre dépôt."
+    exit 1
+  else
+    echo -e "${DONE} ${BOLD}Fichier 'whisperx_cli.py' trouvé${RESET}"
+  fi
 
-# 8. Installation de WhisperX depuis PyPI
-run_step "Installation de WhisperX" pip install whisperx
+  # 3. Vérification de CUDA 12.4 et de nvidia-smi
+  check_cuda
 
-# Récupérer le chemin absolu du répertoire cloné
-ABS_PATH="$(pwd)"
+  # 3.5. Vérification de libcudnn
+  check_libcudnn
 
-# 9. Création du wrapper exécutable 'whisperx_cli'
-run_step "Création du wrapper exécutable 'whisperx_cli'" bash -c "cat <<EOF > whisperx_cli
+  # 4. Création de l'environnement virtuel
+  run_step "Création de l'environnement virtuel 'whisperx_env'" python3 -m venv whisperx_env
+  ENV_CREATED=1
+
+  # 5. Activation de l'environnement virtuel (dans ce shell)
+  echo -ne "${LOADING} ${BOLD}Activation de l'environnement virtuel${RESET} [${LOADING} en cours...]"
+  source whisperx_env/bin/activate
+  echo -e "\r${DONE} ${BOLD}Activation de l'environnement virtuel${RESET} [${DONE} terminé]"
+
+  # 6. Mise à jour de pip
+  run_step "Mise à jour de pip" pip install --upgrade pip
+
+  # 7. Installation de PyTorch, torchvision et torchaudio selon le système
+  if [[ "$(uname)" == "Darwin" ]]; then
+    run_step "Installation de PyTorch et torchaudio pour macOS" \
+             pip install torch torchaudio
+  else
+    run_step "Installation de PyTorch, torchvision et torchaudio pour CUDA 12.4 (peut prendre plusieurs minutes)" \
+             pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu124
+  fi
+
+  # 8. Installation de WhisperX depuis PyPI et dépendances supplémentaires pour macOS
+  if [[ "$(uname)" == "Darwin" ]]; then
+    run_step "Installation de pyOpenSSL compatible pour macOS" pip install pyOpenSSL==22.0.0
+    run_step "Installation d'urllib3 compatible" pip install urllib3==1.26.6
+    run_step "Installation de PyTorch et torchaudio pour macOS" pip install torch torchaudio
+    run_step "Installation de transformers" pip install transformers
+    run_step "Installation de WhisperX avec dépendances pour macOS" pip install whisperx
+    run_step "Installation de nltk" pip install nltk
+    run_step "Réinstallation de CTranslate2 compatible" pip install --force-reinstall ctranslate2==4.4.0
+  else
+    run_step "Installation de WhisperX" pip install whisperx
+  fi
+
+  # Récupérer le chemin absolu du répertoire cloné
+  ABS_PATH="$(pwd)"
+
+  # 9. Création du wrapper exécutable 'whisperx_cli'
+  run_step "Création du wrapper exécutable 'whisperx_cli'" bash -c "cat <<EOF > whisperx_cli
 #!/bin/bash
 source \"${ABS_PATH}/whisperx_env/bin/activate\"
 python \"${ABS_PATH}/whisperx_cli.py\" \"\\\$@\"
 EOF"
-chmod +x whisperx_cli
+  chmod +x whisperx_cli
 
-# 10. Déconnexion de l'environnement virtuel pour le test final
-deactivate 2>/dev/null
+  # 10. Déconnexion de l'environnement virtuel pour le test final
+  deactivate 2>/dev/null
 
-# 11. Lancement du test final via le wrapper (hors du venv courant)
-echo -ne "${LOADING} ${BOLD}Test final : transcription sur 'audio.mp3'${RESET} [${LOADING} en cours...]"
-if [ -n "$HF_TOKEN" ]; then
-  ./whisperx_cli audio.mp3 --model large-v3 --language fr --hf_token "$HF_TOKEN" --diarize --output test_output.srt --output_format srt --nb_speaker 1 > /dev/null 2>&1
+  # 11. Lancement du test final via le wrapper (hors du venv courant)
+  echo -ne "${LOADING} ${BOLD}Test final : transcription sur 'audio.mp3'${RESET} [${LOADING} en cours...]"
+
+  # Définir les options de compute_type selon le système
+  if [[ "$(uname)" == "Darwin" ]]; then
+    COMPUTE_TYPE="--compute_type int8"
+  else
+    COMPUTE_TYPE=""
+  fi
+
+  # Construire la commande complète
+  if [ -n "$HF_TOKEN" ]; then
+    CMD="./whisperx_cli audio.mp3 --model large-v3 --language fr --hf_token \"$HF_TOKEN\" --diarize --output test_output.srt --output_format srt --nb_speaker 1 $COMPUTE_TYPE"
+  else
+    CMD="./whisperx_cli audio.mp3 --model large-v3 --language fr --output test_output.srt --output_format srt --nb_speaker 1 $COMPUTE_TYPE"
+  fi
+
+  # Afficher la commande
+  echo -e "\n${BOLD}Exécution de la commande :${RESET} $CMD"
+
+  # Exécuter la commande
+  if [ $VERBOSE -eq 1 ]; then
+    eval "$CMD"
+  else
+    eval "$CMD > /dev/null 2>&1"
+  fi
+
+  echo -e "\r${DONE} ${BOLD}Test final : transcription sur 'audio.mp3'${RESET} [${DONE} terminé]"
+
+  # 12. Vérification finale du fichier de sous-titres
+  if [ -s "test_output.srt" ]; then
+    echo -e "${DONE} ${BOLD}Fichier de sous-titres 'test_output.srt' créé et non vide.${RESET}"
+  else
+    echo -e "❌ ${BOLD}Erreur${RESET}: Le fichier 'test_output.srt' n'existe pas ou est vide."
+    exit 1
+  fi
+
+  # 13. Copier le wrapper dans /usr/local/bin pour le rendre accessible globalement
+  echo -ne "${LOADING} ${BOLD}Installation globale de 'whisperx_cli'${RESET} [${LOADING} en cours...]"
+  if [ "$(id -u)" -ne 0 ]; then
+    sudo cp whisperx_cli /usr/local/bin/whisperx_cli
+  else
+    cp whisperx_cli /usr/local/bin/whisperx_cli
+  fi
+  chmod +x /usr/local/bin/whisperx_cli
+  WRAPPER_INSTALLED=1
+  echo -e "\r${DONE} ${BOLD}Installation globale de 'whisperx_cli'${RESET} [${DONE} terminé]"
+
+  echo -e "\n${DONE} ${BOLD}Partie 1 terminée.${RESET} Vous pouvez lancer vos transcriptions via la commande 'whisperx_cli'."
+
+  # Afficher un message spécifique à la fin selon le système
+  if [[ "$(uname)" == "Darwin" ]]; then
+    echo -e "\n${DONE} ${BOLD}Setup complet sur macOS.${RESET}"
+    echo -e "${BOLD}Note importante:${RESET} Sur macOS, utilisez toujours l'option ${BOLD}--compute_type int8${RESET} avec whisperx_cli."
+    echo -e "Exemple: ${BOLD}whisperx_cli audio.mp3 --compute_type int8 --model large-v3 --language fr${RESET}"
+  else
+    echo -e "\n${DONE} ${BOLD}Setup complet.${RESET} Vous pouvez lancer vos transcriptions avec 'whisperx_cli' et mettre à jour l'API avec 'whisper_api_update'."
+  fi
 else
-  ./whisperx_cli audio.mp3 --model large-v3 --language fr --output test_output.srt --output_format srt --nb_speaker 1 > /dev/null 2>&1
+  echo -e "\n${BOLD}=== Option --only-api détectée, passage directement à la partie 2 ===${RESET}"
+  
+  # Si on est dans le répertoire whisper-x-setup, on remonte d'un niveau
+  if [ -n "$(pwd | grep -o "whisper-x-setup")" ]; then
+    cd ..
+  fi
 fi
-echo -e "\r${DONE} ${BOLD}Test final : transcription sur 'audio.mp3'${RESET} [${DONE} terminé]"
-
-# 12. Vérification finale du fichier de sous-titres
-if [ -s "test_output.srt" ]; then
-  echo -e "${DONE} ${BOLD}Fichier de sous-titres 'test_output.srt' créé et non vide.${RESET}"
-else
-  echo -e "❌ ${BOLD}Erreur${RESET}: Le fichier 'test_output.srt' n'existe pas ou est vide."
-  exit 1
-fi
-
-# 13. Copier le wrapper dans /usr/local/bin pour le rendre accessible globalement
-echo -ne "${LOADING} ${BOLD}Installation globale de 'whisperx_cli'${RESET} [${LOADING} en cours...]"
-if [ "$(id -u)" -ne 0 ]; then
-  sudo cp whisperx_cli /usr/local/bin/whisperx_cli
-else
-  cp whisperx_cli /usr/local/bin/whisperx_cli
-fi
-chmod +x /usr/local/bin/whisperx_cli
-WRAPPER_INSTALLED=1
-echo -e "\r${DONE} ${BOLD}Installation globale de 'whisperx_cli'${RESET} [${DONE} terminé]"
-
-echo -e "\n${DONE} ${BOLD}Partie 1 terminée.${RESET} Vous pouvez lancer vos transcriptions via la commande 'whisperx_cli'."
 
 # --- PARTIE 2 : Installation et lancement de whisper-api ---
 echo -e "\n${BOLD}=== Partie 2 : Configuration de whisper-api ===${RESET}"
