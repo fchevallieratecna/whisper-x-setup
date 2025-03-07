@@ -16,6 +16,8 @@ logging.getLogger("speechbrain").setLevel(logging.ERROR)
 logging.getLogger("pytorch_lightning").setLevel(logging.ERROR)
 logging.getLogger("pyannote.audio").setLevel(logging.ERROR)
 warnings.filterwarnings("ignore")
+warnings.filterwarnings("ignore", message=".*Lightning automatically upgraded your loaded checkpoint.*")
+warnings.filterwarnings("ignore", category=UserWarning, message=".*Lightning automatically upgraded your loaded checkpoint.*")
 
 import argparse
 import json
@@ -139,15 +141,28 @@ def main():
     print(f"   - device         : {'cpu' if platform.system() == 'Darwin' else 'cuda'} (auto-detected)")
     print("")
 
-    print(">> Starting transcription")
+    # Définir les étapes principales et leur progression
+    steps = [
+        (10, "Chargement du modèle"),
+        (20, "Préparation de l'audio"),
+        (40, "Transcription"),
+        (60, "Alignement des timestamps"),
+        (80, "Diarisation") if args.diarize else None,
+        (95, "Sauvegarde des résultats"),
+        (100, "Transcription terminée")
+    ]
+    steps = [s for s in steps if s is not None]
+    
+    print(">> Démarrage de la transcription")
     try:
-        print("   -> Loading model...")
+        print(f"[{steps[0][0]}%] - {steps[0][1]}...")
         # Toujours utiliser CPU sur macOS
         device = "cpu" if platform.system() == "Darwin" else "cuda"
         asr_options = {"initial_prompt": args.initial_prompt}
         
         # Afficher les paramètres de chargement pour le débogage
-        print(f"   -> Using device: {device}, compute_type: {args.compute_type}")
+        if args.debug:
+            print(f"   -> Using device: {device}, compute_type: {args.compute_type}")
         
         # Pass language directly
         model = maybe_call(whisperx.load_model, args.debug, args.model, device,
@@ -158,22 +173,22 @@ def main():
         return
 
     try:
-        print("   -> Loading and preparing audio...")
+        print(f"[{steps[1][0]}%] - {steps[1][1]}...")
         audio = maybe_call(whisperx.load_audio, args.debug, args.audio_file)
     except Exception as e:
         print("   !! Error loading audio:", e)
         return
 
     try:
-        print("   -> Transcribing...")
+        print(f"[{steps[2][0]}%] - {steps[2][1]}...")
         result = maybe_call(model.transcribe, args.debug, audio, batch_size=args.batch_size)
     except Exception as e:
         print("   !! Error during transcription:", e)
         return
 
     try:
+        print(f"[{steps[3][0]}%] - {steps[3][1]}...")
         lang = args.language if args.language else result.get("language", "fr")
-        print("   -> Aligning timestamps...")
         model_a, metadata = maybe_call(whisperx.load_align_model, args.debug, language_code=lang, device=device)
         result_aligned = maybe_call(whisperx.align, args.debug, result["segments"], model_a, metadata, audio, device, return_char_alignments=False)
     except Exception as e:
@@ -182,7 +197,8 @@ def main():
 
     if args.diarize:
         try:
-            print("   -> Running diarization...")
+            diarize_step = next(s for s in steps if s[1] == "Diarisation")
+            print(f"[{diarize_step[0]}%] - {diarize_step[1]}...")
             diarize_model = maybe_call(whisperx.DiarizationPipeline, args.debug, use_auth_token=args.hf_token, device=device)
             if args.nb_speaker is not None:
                 diarize_segments = maybe_call(
@@ -211,7 +227,8 @@ def main():
                 return
 
     try:
-        print("   -> Saving results...")
+        save_step = next(s for s in steps if s[1] == "Sauvegarde des résultats")
+        print(f"[{save_step[0]}%] - {save_step[1]}...")
         fmt = args.output_format.lower()
         if fmt == "json":
             save_json(args.output, result_aligned)
@@ -223,7 +240,8 @@ def main():
         print("   !! Error during saving:", e)
         return
 
-    print(">> Transcription completed successfully.")
+    final_step = next(s for s in steps if s[1] == "Transcription terminée")
+    print(f"[{final_step[0]}%] - {final_step[1]}.")
 
 if __name__ == "__main__":
     main()

@@ -371,8 +371,17 @@ run_step "Construction du projet whisper-api (npm run build)" npm run build
 
 # 18. Lancement de whisper-api avec pm2 (en définissant UPLOAD_PATH=/tmp)
 echo -ne "${LOADING} ${BOLD}Lancement de whisper-api avec pm2 (npm start)${RESET} [${LOADING} en cours...]"
-UPLOAD_PATH=/tmp pm2 start npm --name "whisper-api" -- start > /dev/null 2>&1
-echo -e "\r${DONE} ${BOLD}Lancement de whisper-api avec pm2${RESET} [${DONE} terminé]"
+
+# Définir le port par défaut ou utiliser celui spécifié
+API_PORT=${API_PORT:-3000}
+for arg in "$@"; do
+  if [[ $arg == --api-port=* ]]; then
+    API_PORT="${arg#*=}"
+  fi
+done
+
+UPLOAD_PATH=/tmp PORT=$API_PORT pm2 start npm --name "whisper-api" -- start > /dev/null 2>&1
+echo -e "\r${DONE} ${BOLD}Lancement de whisper-api avec pm2 (port: $API_PORT)${RESET} [${DONE} terminé]"
 
 # 19. Création du script de mise à jour de whisper-api
 echo -ne "${LOADING} ${BOLD}Création du script de mise à jour de whisper-api${RESET} [${LOADING} en cours...]"
@@ -396,4 +405,32 @@ fi
 echo -e "\r${DONE} ${BOLD}Création du script de mise à jour de whisper-api${RESET} [${DONE} terminé]"
 
 echo -e "\n${DONE} ${BOLD}Partie 2 terminée.${RESET} Le projet whisper-api est lancé via pm2."
+
+# Affichage du tableau récapitulatif
+echo -e "\n${BOLD}=== Récapitulatif ===${RESET}"
+echo -e "\n${BOLD}Utilisation de l'API :${RESET}"
+echo -e "┌───────────────────────────────────────────────────────────────────────┐"
+echo -e "│ ${BOLD}API Whisper${RESET}                                                         │"
+echo -e "├───────────────────────────────────────────────────────────────────────┤"
+echo -e "│ URL: ${BOLD}http://localhost:$API_PORT${RESET}                                     │"
+echo -e "│                                                                       │"
+echo -e "│ ${BOLD}Endpoints disponibles :${RESET}                                             │"
+echo -e "│ • POST /api/transcribe - Transcription d'un fichier audio             │"
+echo -e "│   Exemple: curl -F \"file=@audio.mp3\" http://localhost:$API_PORT/api/transcribe │"
+echo -e "│                                                                       │"
+echo -e "│ • GET /api/status - Vérification du statut de l'API                   │"
+echo -e "│   Exemple: curl http://localhost:$API_PORT/api/status                 │"
+echo -e "└───────────────────────────────────────────────────────────────────────┘"
+
+echo -e "\n${BOLD}Commandes utiles :${RESET}"
+echo -e "┌───────────────────────────────────────────────────────────────────────┐"
+echo -e "│ ${BOLD}CLI WhisperX${RESET}                                                        │"
+echo -e "├───────────────────────────────────────────────────────────────────────┤"
+echo -e "│ • ${BOLD}whisperx_cli${RESET} - Transcription en ligne de commande                 │"
+echo -e "│   Exemple: whisperx_cli audio.mp3 --model large-v3 --language fr      │"
+echo -e "│                                                                       │"
+echo -e "│ • ${BOLD}whisper_api_update${RESET} - Mise à jour de l'API                         │"
+echo -e "│   Exemple: whisper_api_update                                         │"
+echo -e "└───────────────────────────────────────────────────────────────────────┘"
+
 echo -e "\n${DONE} ${BOLD}Setup complet.${RESET} Vous pouvez lancer vos transcriptions avec 'whisperx_cli' et mettre à jour l'API avec 'whisper_api_update'."
