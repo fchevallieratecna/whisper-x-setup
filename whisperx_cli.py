@@ -82,7 +82,8 @@ def main():
     parser = argparse.ArgumentParser(
         description="Transcription, alignment and diarization with WhisperX"
     )
-    parser.add_argument("audio_file", type=str, help="Path to the audio file")
+    parser.add_argument("--version", action="store_true", help="Affiche la version et quitte")
+    parser.add_argument("audio_file", type=str, help="Path to the audio file", nargs="?")
     parser.add_argument("--model", type=str, default=default_values["model"],
                         help="WhisperX model to use (default: large-v3)")
     parser.add_argument("--diarize", dest="diarize", action="store_true",
@@ -110,6 +111,15 @@ def main():
     parser.add_argument("--nb_speaker", type=int, default=None, 
                         help="Exact number of speakers (sets both min_speakers and max_speakers)")
     args = parser.parse_args()
+
+    # Vérifier si l'utilisateur demande la version
+    if args.version:
+        print("WhisperX CLI v1.0.0")
+        return
+        
+    # Vérifier si le fichier audio est fourni
+    if args.audio_file is None:
+        parser.error("Un fichier audio est requis sauf avec l'option --version")
 
     # Set default output if not provided
     if args.output is None:
