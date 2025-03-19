@@ -10,12 +10,27 @@ Ce projet fournit une solution complète pour la transcription audio avec Whispe
 - Pour Linux/Windows : CUDA 12.4 et libcudnn8
 - Node.js (installé automatiquement si nécessaire)
 - Un token Hugging Face (pour la diarisation)
+- Token ngrok (optionnel, pour exposer l'API à l'extérieur)
 
 ## Installation rapide
 
 ### Pour Linux/Windows avec GPU NVIDIA
 ```bash
+# Installation complète (CLI et API)
 wget -qO- https://raw.githubusercontent.com/fchevallieratecna/whisper-x-setup/main/setup.sh > setup.sh && chmod +x setup.sh && ./setup.sh
+
+# Options disponibles
+# --verbose/-v : Mode verbeux (affiche les sorties des commandes)
+# --only-api : Installe uniquement l'API (sans le CLI)
+# --hf-token=TOKEN : Spécifie directement le token Hugging Face
+# --ngrok-token=TOKEN : Spécifie directement le token ngrok
+# --api-port=PORT : Spécifie le port pour l'API (défaut: 3000)
+
+# Exemples:
+# Installation verbose avec token HF prédéfini
+# ./setup.sh -v --hf-token=hf_votre_token
+# Installation de l'API uniquement sur le port 5000
+# ./setup.sh --only-api --api-port=5000
 ```
 
 ### Pour Mac (CPU uniquement)
@@ -77,7 +92,36 @@ whisperx audio.mp3 --compute_type int8 --model large-v3 --language fr --diarize 
 
 L'API est automatiquement lancée via PM2 pendant l'installation sur Linux/Windows.
 
-Pour Mac, l'API n'est pas configurée automatiquement.
+### Configuration
+
+- Port par défaut : 3000 (configurable avec `--api-port=PORT`)
+- Exposer l'API avec ngrok (nécessite un token ngrok)
+- L'API utilise `/tmp` comme dossier temporaire pour les fichiers uploadés
+
+### Endpoints
+
+- `POST /api/transcribe` - Transcription d'un fichier audio
+  ```bash
+  curl -F "file=@audio.mp3" http://localhost:3000/api/transcribe
+  ```
+
+- `GET /api/status` - Vérification du statut de l'API
+  ```bash
+  curl http://localhost:3000/api/status
+  ```
+
+### Mise à jour de l'API
+
+Après installation, un script `whisper_api_update` est créé pour faciliter la mise à jour :
+
+```bash
+# Met à jour l'API à la dernière version et redémarre le service
+whisper_api_update
+```
+
+### Configuration ngrok
+
+Si vous fournissez un token ngrok lors de l'installation (`--ngrok-token=TOKEN`), l'API sera automatiquement exposée via ngrok, ce qui permet d'y accéder depuis n'importe où sur internet.
 
 ## Dépannage
 
