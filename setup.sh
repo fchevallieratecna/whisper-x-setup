@@ -154,6 +154,8 @@ if [ $ONLY_API -eq 0 ]; then
   # --- Demande du token Hugging Face dès le début ---
   read -p "Veuillez entrer votre token Hugging Face (pour la diarization) ou appuyez sur Entrée pour l'ignorer : " HF_TOKEN
 
+  # --- Demande du token ngrok ---
+  read -p "Veuillez entrer votre token ngrok ou appuyez sur Entrée pour l'ignorer : " NGROK_TOKEN
 
   # URL et nom du dépôt whisper-x-setup
   REPO_URL="https://github.com/fchevallieratecna/whisper-x-setup.git"
@@ -383,6 +385,22 @@ done
 UPLOAD_PATH=/tmp PORT=$API_PORT pm2 start npm --name "whisper-api" -- start > /dev/null 2>&1
 echo -e "\r${DONE} ${BOLD}Lancement de whisper-api avec pm2 (port: $API_PORT)${RESET} [${DONE} terminé]"
 
+# Installation et configuration de ngrok
+if [ -n "$NGROK_TOKEN" ]; then
+  echo -ne "${LOADING} ${BOLD}Installation de ngrok${RESET} [${LOADING} en cours...]"
+  curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null && echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list && sudo apt update && sudo apt install ngrok > /dev/null 2>&1
+  echo -e "\r${DONE} ${BOLD}Installation de ngrok${RESET} [${DONE} terminé]"
+  
+  echo -ne "${LOADING} ${BOLD}Configuration du token ngrok${RESET} [${LOADING} en cours...]"
+  ngrok config add-authtoken "$NGROK_TOKEN" > /dev/null 2>&1
+  echo -e "\r${DONE} ${BOLD}Configuration du token ngrok${RESET} [${DONE} terminé]"
+  
+  echo -ne "${LOADING} ${BOLD}Démarrage du tunnel ngrok en arrière-plan${RESET} [${LOADING} en cours...]"
+  nohup ngrok http --url=innocent-new-mole.ngrok-free.app $API_PORT > /dev/null 2>&1 &
+  NGROK_PID=$!
+  echo -e "\r${DONE} ${BOLD}Démarrage du tunnel ngrok en arrière-plan (PID: $NGROK_PID)${RESET} [${DONE} terminé]"
+fi
+
 # 19. Création du script de mise à jour de whisper-api
 echo -ne "${LOADING} ${BOLD}Création du script de mise à jour de whisper-api${RESET} [${LOADING} en cours...]"
 cat <<EOF > whisper_api_update
@@ -413,6 +431,9 @@ echo -e "┌──────────────────────�
 echo -e "│ ${BOLD}API Whisper${RESET}                                                         │"
 echo -e "├───────────────────────────────────────────────────────────────────────┤"
 echo -e "│ URL: ${BOLD}http://localhost:$API_PORT${RESET}                                     │"
+if [ -n "$NGROK_TOKEN" ]; then
+  echo -e "│ URL externe (ngrok): ${BOLD}https://innocent-new-mole.ngrok-free.app${RESET}     │"
+fi
 echo -e "│                                                                       │"
 echo -e "│ ${BOLD}Endpoints disponibles :${RESET}                                             │"
 echo -e "│ • POST /api/transcribe - Transcription d'un fichier audio             │"
