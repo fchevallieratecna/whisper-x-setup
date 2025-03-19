@@ -36,8 +36,6 @@ fi
 # --- Mode verbose et options ---
 VERBOSE=0
 ONLY_API=0
-HF_TOKEN=""
-NGROK_TOKEN=""
 
 # Traitement des arguments
 while [[ $# -gt 0 ]]; do
@@ -50,30 +48,13 @@ while [[ $# -gt 0 ]]; do
       ONLY_API=1
       shift
       ;;
-    --hf-token=*)
-      HF_TOKEN="${1#*=}"
-      shift
-      ;;
-    --ngrok-token=*)
-      NGROK_TOKEN="${1#*=}"
-      shift
-      ;;
     *)
       echo "Option non reconnue: $1"
-      echo "Usage: ./setup.sh [-v|--verbose] [--only-api] [--hf-token=token] [--ngrok-token=token]"
+      echo "Usage: ./setup.sh [-v|--verbose] [--only-api]"
       exit 1
       ;;
   esac
 done
-
-# Récupérer des variables d'environnement si définies
-if [ -z "$HF_TOKEN" ] && [ -n "$HF_TOKEN" ]; then
-  HF_TOKEN="$HF_TOKEN"
-fi
-
-if [ -z "$NGROK_TOKEN" ] && [ -n "$NGROK_TOKEN" ]; then
-  NGROK_TOKEN="$NGROK_TOKEN"
-fi
 
 # --- Indicateurs pour rollback ---
 CLONED=0
@@ -170,19 +151,11 @@ check_cuda() {
 if [ $ONLY_API -eq 0 ]; then
   echo -e "\n${BOLD}=== Partie 1 : Configuration de WhisperX CLI ===${RESET}"
 
-  # --- Demande du token Hugging Face seulement si pas déjà défini ---
-  if [ -z "$HF_TOKEN" ]; then
-    read -p "Veuillez entrer votre token Hugging Face (pour la diarization) ou appuyez sur Entrée pour l'ignorer : " HF_TOKEN
-  else
-    echo -e "${DONE} ${BOLD}Token Hugging Face fourni par argument ou variable d'environnement${RESET}"
-  fi
+  # --- Demande du token Hugging Face dès le début ---
+  read -p "Veuillez entrer votre token Hugging Face (pour la diarization) ou appuyez sur Entrée pour l'ignorer : " HF_TOKEN
 
-  # --- Demande du token ngrok seulement si pas déjà défini ---
-  if [ -z "$NGROK_TOKEN" ]; then
-    read -p "Veuillez entrer votre token ngrok ou appuyez sur Entrée pour l'ignorer : " NGROK_TOKEN
-  else
-    echo -e "${DONE} ${BOLD}Token ngrok fourni par argument ou variable d'environnement${RESET}"
-  fi
+  # --- Demande du token ngrok ---
+  read -p "Veuillez entrer votre token ngrok ou appuyez sur Entrée pour l'ignorer : " NGROK_TOKEN
 
   # URL et nom du dépôt whisper-x-setup
   REPO_URL="https://github.com/fchevallieratecna/whisper-x-setup.git"
@@ -339,13 +312,18 @@ if ! command -v node >/dev/null 2>&1; then
   echo -e "\n${BOLD}Installation de Node.js et npm via nvm${RESET}"
   curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.1/install.sh | bash
   echo -e "\n${DONE} ${BOLD}Installation de Node.js et npm via nvm terminée.${RESET}"
+  
+  # Sourcer NVM dans la session actuelle
+  export NVM_DIR="$HOME/.nvm"
+  [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+  [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
+  
   # Installation de node 22 + alias default
   nvm install 22
   nvm alias default 22
   echo -e "\n${DONE} ${BOLD}Installation de Node.js et npm via nvm terminée.${RESET}"
-  echo -e "\n${BOLD}Veuillez fermer et rouvrir le terminal, puis relancer le script.${RESET}"
-  exit 1
-fi
+}
+
 # Définir le répertoire du projet API
 API_REPO_URL="https://github.com/fchevallieratecna/whisper-api.git"
 API_REPO_DIR="whisper-api"
