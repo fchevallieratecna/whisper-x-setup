@@ -255,6 +255,11 @@ if [ $ONLY_API -eq 0 ]; then
   # 9. Création du wrapper exécutable 'whisperx_cli'
   run_step "Création du wrapper exécutable 'whisperx_cli'" bash -c "cat <<EOF > whisperx_cli
 #!/bin/bash
+if [ \"\$1\" == \"--version\" ]; then
+  echo \"WhisperX CLI version 1.0.0\"
+  exit 0
+fi
+
 source \"${ABS_PATH}/whisperx_env/bin/activate\"
 python \"${ABS_PATH}/whisperx_cli.py\" \"\\\$@\"
 EOF"
