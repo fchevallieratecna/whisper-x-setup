@@ -92,9 +92,22 @@ check_libcudnn() {
   if ldconfig -p | grep -q "libcudnn_ops_infer.so.8"; then
     echo -e "\r${DONE} ${BOLD}libcudnn_ops_infer.so.8 trouvé${RESET}"
   else
-    echo -e "\r❌ ${BOLD}libcudnn_ops_infer.so.8 non trouvé${RESET}"
-    echo "Veuillez installer libcudnn (par exemple, 'apt update && apt install -y libcudnn8 libcudnn8-dev libcudnn8-samples') ou configurer LD_LIBRARY_PATH pour inclure le dossier contenant libcudnn_ops_infer.so.8."
-    exit 1
+    echo -e "\r${LOADING} ${BOLD}libcudnn_ops_infer.so.8 non trouvé, tentative d'installation automatique...${RESET}"
+    if [ -f /etc/debian_version ]; then
+      apt-get update -y && \
+      apt-get install -y libcudnn8 libcudnn8-dev libcudnn8-samples
+    else
+      echo "Installation automatique de libcudnn non supportée sur ce système. Veuillez l'installer manuellement." | tee -a /var/log/whisperx_setup.log
+      exit 1
+    fi
+    # Vérification après installation
+    if ldconfig -p | grep -q "libcudnn_ops_infer.so.8"; then
+      echo -e "\r${DONE} ${BOLD}libcudnn_ops_infer.so.8 installé avec succès${RESET}"
+    else
+      echo -e "\r❌ ${BOLD}Échec de l'installation de libcudnn_ops_infer.so.8${RESET}"
+      echo "Impossible d'installer libcudnn automatiquement. Consultez /var/log/whisperx_setup.log pour plus de détails."
+      exit 1
+    fi
   fi
 }
 
