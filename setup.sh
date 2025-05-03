@@ -88,11 +88,11 @@ check_libcudnn() {
     return 0
   fi
   
-  echo -ne "${LOADING} ${BOLD}Vérification de libcudnn_ops_infer.so.8${RESET} [${LOADING} en cours...]"
-  if ldconfig -p | grep -q "libcudnn_ops_infer.so.8"; then
-    echo -e "\r${DONE} ${BOLD}libcudnn_ops_infer.so.8 trouvé${RESET}"
+  echo -ne "${LOADING} ${BOLD}Vérification de libcudnn_ops.so.9${RESET} [${LOADING} en cours...]"
+  if ldconfig -p | grep -q "libcudnn_ops.so.9"; then
+    echo -e "\r${DONE} ${BOLD}libcudnn_ops.so.9 trouvé${RESET}"
   else
-    echo -e "\r${LOADING} ${BOLD}libcudnn_ops_infer.so.8 non trouvé, tentative d'installation automatique...${RESET}"
+    echo -e "\r${LOADING} ${BOLD}libcudnn_ops.so.9 non trouvé, tentative d'installation automatique...${RESET}"
     if [ -f /etc/debian_version ]; then
       apt-get update -y && \
       apt-get install -y libcudnn8 libcudnn8-dev libcudnn8-samples
@@ -101,10 +101,10 @@ check_libcudnn() {
       exit 1
     fi
     # Vérification après installation
-    if ldconfig -p | grep -q "libcudnn_ops_infer.so.8"; then
-      echo -e "\r${DONE} ${BOLD}libcudnn_ops_infer.so.8 installé avec succès${RESET}"
+    if ldconfig -p | grep -q "libcudnn_ops.so.9"; then
+      echo -e "\r${DONE} ${BOLD}libcudnn_ops.so.9 installé avec succès${RESET}"
     else
-      echo -e "\r❌ ${BOLD}Échec de l'installation de libcudnn_ops_infer.so.8${RESET}"
+      echo -e "\r❌ ${BOLD}Échec de l'installation de libcudnn_ops.so.9${RESET}"
       echo "Impossible d'installer libcudnn automatiquement. Consultez /var/log/whisperx_setup.log pour plus de détails."
       exit 1
     fi
