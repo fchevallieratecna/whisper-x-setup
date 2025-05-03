@@ -456,7 +456,7 @@ fi
 
 # 19. Création du script de mise à jour de whisper-api
 echo -ne "${LOADING} ${BOLD}Création du script de mise à jour de whisper-api${RESET} [${LOADING} en cours...]"
-cat <<EOF > whisper_api_update
+cat << 'EOF' > whisper_api_update
 #!/bin/bash
 # Script de mise à jour de whisper-api
 API_PATH="${API_PATH}"
