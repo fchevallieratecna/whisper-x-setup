@@ -210,14 +210,14 @@ def main():
         try:
             diarize_step = next(s for s in steps if s[1] == "Diarisation")
             print(f"[{diarize_step[0]}%] - {diarize_step[1]}...")
-            diarize_model = maybe_call(DiarizationPipeline, args.debug, use_auth_token=args.hf_token, device=device)
+            diarize_model = maybe_call(DiarizationPipeline, args.debug, token=args.hf_token, device=device)
             if args.nb_speaker is not None:
                 diarize_segments = maybe_call(
                     diarize_model, args.debug, audio, min_speakers=args.nb_speaker, max_speakers=args.nb_speaker
                 )
             else:
                 diarize_segments = maybe_call(
-                    diarize_model, args.debug, audio, min_speakers=args.min_speakers, max_speakers=args.max_speakers
+                    diarize_model, args.debug, audio
                 )
             result_aligned = whisperx.assign_word_speakers(diarize_segments, result_aligned)
         except Exception as e:
@@ -227,7 +227,7 @@ def main():
                     print("   !! Error: No token provided. Diarization cannot be performed.")
                     return
                 try:
-                    diarize_model = maybe_call(DiarizationPipeline, args.debug, use_auth_token=token_input, device=device)
+                    diarize_model = maybe_call(DiarizationPipeline, args.debug, token=token_input, device=device)
                     diarize_segments = maybe_call(diarize_model, args.debug, audio)
                     result_aligned = whisperx.assign_word_speakers(diarize_segments, result_aligned)
                 except Exception as e2:

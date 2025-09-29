@@ -255,10 +255,12 @@ if [ $ONLY_API -eq 0 ]; then
     run_step "Installation d'urllib3 compatible" pip install urllib3==1.26.6
     run_step "Installation de PyTorch et torchaudio pour macOS" pip install torch torchaudio
     run_step "Installation de transformers" pip install transformers
+    run_step "Installation d'omegaconf" pip install omegaconf
     run_step "Installation de WhisperX avec dépendances pour macOS" pip install whisperx
     run_step "Installation de nltk" pip install nltk
     run_step "Réinstallation de CTranslate2 compatible" pip install --force-reinstall ctranslate2==4.4.0
   else
+    run_step "Installation d'omegaconf" pip install omegaconf
     run_step "Installation de WhisperX" pip install whisperx
   fi
 
