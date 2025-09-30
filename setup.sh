@@ -343,8 +343,16 @@ install_pytorch() {
         # Configurer les variables d'environnement pour éviter les conflits
         log_info "🔧 Configuration des variables d'environnement cuDNN"
         
+        # Définir le chemin de l'environnement
+        local env_path
+        if [[ $USE_CONDA -eq 1 ]]; then
+            env_path="$(conda info --base)/envs/whisper_modern_env"
+        else
+            env_path="$(pwd)/whisper_modern_env"
+        fi
+        
         # Créer le script d'environnement
-        cat > "$ENV_PATH/bin/setup_cuda_env.sh" << 'EOF'
+        cat > "$env_path/bin/setup_cuda_env.sh" << 'EOF'
 #!/bin/bash
 # Configuration automatique CUDA/cuDNN pour Whisper
 export CUDA_MODULE_LOADING=LAZY
@@ -370,11 +378,11 @@ fi
 export LD_LIBRARY_PATH=$(echo "$LD_LIBRARY_PATH" | tr ':' '\n' | awk '!seen[$0]++' | tr '\n' ':' | sed 's/:$//')
 EOF
 
-        chmod +x "$ENV_PATH/bin/setup_cuda_env.sh"
+        chmod +x "$env_path/bin/setup_cuda_env.sh"
         log_success "Script de configuration CUDA créé"
         
         # Ajouter au script d'activation
-        echo "source \"\$(dirname \"\$BASH_SOURCE\")/setup_cuda_env.sh\"" >> "$ENV_PATH/bin/activate"
+        echo "source \"\$(dirname \"\$BASH_SOURCE\")/setup_cuda_env.sh\"" >> "$env_path/bin/activate"
         log_success "Configuration CUDA ajoutée à l'activation de l'environnement"
     fi
 }
@@ -485,6 +493,14 @@ create_modern_wrapper() {
 
     local abs_path
     abs_path="$(pwd)"
+    
+    # Déterminer le chemin d'activation selon le type d'environnement
+    local activation_cmd
+    if [[ $USE_CONDA -eq 1 ]]; then
+        activation_cmd="conda activate whisper_modern_env"
+    else
+        activation_cmd="source \"${abs_path}/whisper_modern_env/bin/activate\""
+    fi
 
     cat > whisper_modern_cli << EOF
 #!/bin/bash
@@ -497,7 +513,7 @@ if [[ "\$1" == "--version" ]]; then
 fi
 
 # Activer l'environnement
-source "${abs_path}/whisper_modern_env/bin/activate"
+${activation_cmd}
 
 # Lancer le CLI moderne
 python "${abs_path}/whisperx_cli.py" "\$@"
@@ -700,21 +716,13 @@ setup_ngrok() {
     # Configuration du token
     ngrok config add-authtoken "$NGROK_TOKEN" > /dev/null 2>&1
 
-    # Démarrage du tunnel
-    nohup ngrok http "$port" > /dev/null 2>&1 &
+    # Démarrage du tunnel avec URL fixe
+    nohup ngrok http --url=innocent-new-mole.ngrok-free.app "$port" > /dev/null 2>&1 &
     local ngrok_pid=$!
 
     sleep 3
 
-    # Récupérer l'URL publique
-    local public_url
-    public_url=$(curl -s http://localhost:4040/api/tunnels | grep -o '"public_url":"[^"]*"' | cut -d'"' -f4 | grep https)
-
-    if [[ -n "$public_url" ]]; then
-        log_success "Tunnel ngrok actif: $public_url"
-    else
-        log_warning "Problème avec le tunnel ngrok"
-    fi
+    log_success "Tunnel ngrok actif: https://innocent-new-mole.ngrok-free.app"
 }
 
 # --- Nettoyage en cas d'erreur ---
@@ -722,8 +730,13 @@ cleanup() {
     log_warning "Interruption détectée - nettoyage en cours"
 
     if [[ $ENV_CREATED -eq 1 ]]; then
-        rm -rf whisper_modern_env
-        log_info "Environnement supprimé"
+        if [[ $USE_CONDA -eq 1 ]]; then
+            conda env remove -n whisper_modern_env -y 2>/dev/null || true
+            log_info "Environnement conda supprimé"
+        else
+            rm -rf whisper_modern_env
+            log_info "Environnement venv supprimé"
+        fi
     fi
 
     if [[ $CLONED -eq 1 ]]; then
@@ -747,6 +760,13 @@ show_summary() {
     echo -e "${BOLD}🎯 Commandes disponibles :${RESET}"
     echo "   • ${BOLD}whisper_modern_cli${RESET} - CLI moderne avec diarization avancée"
     echo "   • ${BOLD}whisper_modern_cli --version${RESET} - Informations sur la version"
+    echo
+    
+    echo -e "${BOLD}🌐 API Whisper :${RESET}"
+    echo "   • URL locale: ${BLUE}http://localhost:3000${RESET}"
+    if [[ -n "$NGROK_TOKEN" ]]; then
+        echo "   • URL externe: ${BLUE}https://innocent-new-mole.ngrok-free.app${RESET}"
+    fi
     echo
     echo -e "${BOLD}📝 Exemples d'utilisation :${RESET}"
     echo "   • Transcription simple:"
