@@ -3,3 +3,4 @@ test_output.srt
 whisper-api/
 whisperx_cli
 whisperx_env/
+.cursor

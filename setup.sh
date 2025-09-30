@@ -386,7 +386,7 @@ fi
 source "${abs_path}/whisper_modern_env/bin/activate"
 
 # Lancer le CLI moderne
-python "${abs_path}/whisper_diarize_cli.py" "\$@"
+python "${abs_path}/whisperx_cli.py" "\$@"
 EOF
 
     chmod +x whisper_modern_cli
@@ -642,9 +642,10 @@ main() {
 
         cd whisper-x-setup || exit 1
 
-        # Vérifier la présence du nouveau CLI
-        if [[ ! -f "whisper_diarize_cli.py" ]]; then
-            log_error "Le fichier whisper_diarize_cli.py est introuvable"
+        # Vérifier la présence du CLI moderne
+        if [[ ! -f "whisperx_cli.py" ]]; then
+            log_error "Le fichier whisperx_cli.py est introuvable"
+            log_info "💡 Vérifiez que le dépôt contient bien whisperx_cli.py"
             exit 1
         fi
 
