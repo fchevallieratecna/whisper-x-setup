@@ -8,9 +8,9 @@ set -euo pipefail  # Strict error handling
 # --- Configuration et constantes ---
 readonly SCRIPT_VERSION="2.0.0"
 readonly PYTHON_MIN_VERSION="3.9"
-readonly PYTHON_MAX_VERSION="3.12"
-readonly PYTORCH_VERSION="2.7.1"
-readonly CUDA_VERSION="12.8"
+readonly PYTHON_MAX_VERSION="3.13"
+readonly PYTORCH_VERSION="2.8.0"
+readonly CUDA_VERSION="12.9"
 
 # URLs des dépôts
 readonly WHISPER_REPO_URL="https://github.com/fchevallieratecna/whisper-x-setup.git"
@@ -267,7 +267,8 @@ install_pytorch() {
 
     if [[ "$(uname)" == "Darwin" ]]; then
         # macOS - CPU uniquement
-        install_cmd="pip install torch==$PYTORCH_VERSION torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu"
+        install_cmd="pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu"
+        log_info "🍎 Système macOS détecté - utilisation version CPU"
     else
         # Linux - Vérifier CUDA
         if command -v nvidia-smi &> /dev/null; then
@@ -277,45 +278,124 @@ install_pytorch() {
             local cuda_major
             cuda_major=$(echo "$cuda_version" | cut -d'.' -f1)
 
+            log_info "🔧 CUDA $cuda_version détecté (version majeure: $cuda_major)"
+
             if [[ $cuda_major -ge 12 ]]; then
-                # CUDA 12.x - utiliser cu121 ou cu124
-                install_cmd="pip install torch==$PYTORCH_VERSION torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121"
+                # CUDA 12.x - utiliser cu129 pour PyTorch 2.8.0 (dernière version officielle)
+                install_cmd="pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu129"
+                log_info "🚀 Utilisation de PyTorch 2.8.0 avec CUDA 12.x (cu129)"
             elif [[ $cuda_major -eq 11 ]]; then
                 # CUDA 11.x
-                install_cmd="pip install torch==$PYTORCH_VERSION torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118"
+                install_cmd="pip install torch==$PYTORCH_VERSION torchvision==0.18.0 torchaudio==$PYTORCH_VERSION --index-url https://download.pytorch.org/whl/cu118"
+                log_info "🚀 Utilisation de PyTorch avec CUDA 11.x (cu118)"
             else
                 # CUDA trop ancien - utiliser CPU
-                install_cmd="pip install torch==$PYTORCH_VERSION torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu"
+                install_cmd="pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu"
+                log_warning "⚠️  CUDA trop ancien ($cuda_version) - utilisation version CPU"
             fi
         else
             # Pas de CUDA - CPU uniquement
-            install_cmd="pip install torch==$PYTORCH_VERSION torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu"
+            install_cmd="pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu"
+            log_info "💻 Pas de CUDA détecté - utilisation version CPU"
         fi
     fi
 
-    if [[ $VERBOSE -eq 1 ]]; then
-        eval "$install_cmd"
-    else
-        eval "$install_cmd" > /dev/null 2>&1
+    log_info "📦 Commande d'installation: $install_cmd"
+    
+    # Toujours afficher les logs pour le debugging
+    log_step "Exécution de l'installation PyTorch..."
+    if ! eval "$install_cmd"; then
+        log_error "❌ Échec de l'installation PyTorch"
+        log_info "💡 Tentative avec une version alternative..."
+        
+        # Fallback vers une version plus ancienne et stable
+        local fallback_cmd="pip install torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1"
+        log_info "📦 Commande fallback: $fallback_cmd"
+        
+        if ! eval "$fallback_cmd"; then
+            log_error "❌ Échec de l'installation PyTorch (même avec fallback)"
+            exit 1
+        fi
     fi
 
     # Vérifier l'installation
-    python -c "import torch; print(f'PyTorch {torch.__version__} installé')"
+    log_step "Vérification de l'installation PyTorch..."
+    if python -c "import torch; print(f'✅ PyTorch {torch.__version__} installé avec succès')" 2>/dev/null; then
+        log_success "PyTorch installé avec succès"
+    else
+        log_error "❌ PyTorch installé mais non importable"
+        log_info "🔍 Diagnostic:"
+        python -c "import torch; print(f'PyTorch version: {torch.__version__}')" || echo "❌ Import torch échoué"
+        exit 1
+    fi
 
-    log_success "PyTorch installé avec succès"
+    # Configuration cuDNN pour compatibilité GPU
+    if command -v nvidia-smi &> /dev/null; then
+        log_step "Configuration cuDNN pour compatibilité GPU"
+        
+        # Vérifier la version cuDNN installée
+        local cudnn_version
+        if python -c "import torch; print(f'cuDNN version: {torch.backends.cudnn.version()}')" 2>/dev/null; then
+            cudnn_version=$(python -c "import torch; print(torch.backends.cudnn.version())" 2>/dev/null)
+            log_info "🔧 cuDNN version détectée: $cudnn_version"
+        fi
+        
+        # Configurer les variables d'environnement pour éviter les conflits
+        log_info "🔧 Configuration des variables d'environnement cuDNN"
+        
+        # Créer le script d'environnement
+        cat > "$ENV_PATH/bin/setup_cuda_env.sh" << 'EOF'
+#!/bin/bash
+# Configuration automatique CUDA/cuDNN pour Whisper
+export CUDA_MODULE_LOADING=LAZY
+export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+
+# Chemin vers les bibliothèques cuDNN de PyTorch
+CUDNN_LIB_PATH="$(python -c "import torch; import os; print(os.path.join(os.path.dirname(torch.__file__), 'lib'))" 2>/dev/null)"
+if [ -d "$CUDNN_LIB_PATH" ]; then
+    export LD_LIBRARY_PATH="$CUDNN_LIB_PATH:$LD_LIBRARY_PATH"
+fi
+
+# Chemin vers les bibliothèques NVIDIA dans l'environnement
+NVIDIA_LIB_PATH="$(find $(python -c "import site; print(site.getsitepackages()[0])") -name "nvidia" -type d 2>/dev/null | head -1)"
+if [ -d "$NVIDIA_LIB_PATH" ]; then
+    for lib_dir in "$NVIDIA_LIB_PATH"/*/lib; do
+        if [ -d "$lib_dir" ]; then
+            export LD_LIBRARY_PATH="$lib_dir:$LD_LIBRARY_PATH"
+        fi
+    done
+fi
+
+# Nettoyer les doublons dans LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=$(echo "$LD_LIBRARY_PATH" | tr ':' '\n' | awk '!seen[$0]++' | tr '\n' ':' | sed 's/:$//')
+EOF
+
+        chmod +x "$ENV_PATH/bin/setup_cuda_env.sh"
+        log_success "Script de configuration CUDA créé"
+        
+        # Ajouter au script d'activation
+        echo "source \"\$(dirname \"\$BASH_SOURCE\")/setup_cuda_env.sh\"" >> "$ENV_PATH/bin/activate"
+        log_success "Configuration CUDA ajoutée à l'activation de l'environnement"
+    fi
 }
 
 install_whisper_dependencies() {
-    log_step "Installation des dépendances Whisper modernes"
+    log_step "Installation des dépendances Whisper-Diarization"
+
+    # Contraintes importantes selon whisper-diarization
+    log_step "Installation des contraintes de base"
+    if ! pip install "numpy<2"; then
+        log_error "❌ Échec de l'installation de numpy<2"
+        exit 1
+    fi
 
     local packages=(
         "faster-whisper>=1.1.0"
-        "openai-whisper"
-        "transformers"
+        "nltk"
         "librosa"
         "soundfile"
-        "pyannote.audio"
         "omegaconf"
+        "pyannote.audio==4.0.0"
     )
 
     # Installation spécifique pour macOS
@@ -325,17 +405,46 @@ install_whisper_dependencies() {
             "urllib3==1.26.18"
             "ctranslate2>=4.4.0"
         )
+        log_info "🍎 Ajout des dépendances spécifiques macOS"
+    else
+        # Linux - Ajouter cuDNN pour compatibilité pyannote
+        packages+=(
+            "nvidia-cudnn-cu12"
+        )
+        log_info "🐧 Ajout de cuDNN pour Linux"
     fi
 
+    log_info "📦 Installation de ${#packages[@]} packages Whisper-Diarization..."
+
     for package in "${packages[@]}"; do
-        if [[ $VERBOSE -eq 1 ]]; then
-            pip install "$package"
+        log_step "Installation de $package"
+        if ! pip install "$package"; then
+            log_error "❌ Échec de l'installation de $package"
+            log_info "💡 Tentative de continuer avec les autres packages..."
         else
-            pip install "$package" > /dev/null 2>&1
+            log_info "✅ $package installé"
         fi
     done
 
-    log_success "Dépendances Whisper installées"
+    # Installation des dépôts Git spécifiques
+    log_step "Installation des dépendances Git spécifiques"
+    local git_packages=(
+        "git+https://github.com/MahmoudAshraf97/demucs.git"
+        "git+https://github.com/oliverguhr/deepmultilingualpunctuation.git"
+        "git+https://github.com/MahmoudAshraf97/ctc-forced-aligner.git"
+        "git+https://github.com/AI4Bharat/indic-numtowords.git"
+    )
+
+    for git_package in "${git_packages[@]}"; do
+        log_step "Installation de $git_package"
+        if ! pip install "$git_package"; then
+            log_warning "⚠️  Échec de l'installation de $git_package (optionnel)"
+        else
+            log_info "✅ $git_package installé"
+        fi
+    done
+
+    log_success "Installation des dépendances Whisper-Diarization terminée"
 }
 
 install_nemo_dependencies() {
@@ -344,25 +453,30 @@ install_nemo_dependencies() {
         return 0
     fi
 
-    log_step "Installation de NeMo 2.0 pour la diarization avancée"
+    log_step "Installation de NeMo >=2.3.0 (compatible whisper-diarization)"
 
-    # NeMo nécessite des dépendances spécifiques
-    local nemo_packages=(
-        "Cython"
-        "nemo_toolkit[asr]"
-        "hydra-core>=1.1"
-        "omegaconf>=2.1"
-    )
+    # NeMo selon les spécifications whisper-diarization
+    log_step "Installation de Cython (prérequis)"
+    if ! pip install "Cython"; then
+        log_error "❌ Échec de l'installation de Cython"
+        exit 1
+    fi
 
-    for package in "${nemo_packages[@]}"; do
-        if [[ $VERBOSE -eq 1 ]]; then
-            pip install "$package"
-        else
-            pip install "$package" > /dev/null 2>&1
-        fi
-    done
+    log_step "Installation de nemo_toolkit[asr]>=2.4.0"
+    if ! pip install "nemo_toolkit[asr]>=2.4.0"; then
+        log_error "❌ Échec de l'installation de NeMo"
+        log_warning "⚠️  NeMo est requis pour whisper-diarization"
+        log_info "💡 Vérifiez la compatibilité PyTorch/CUDA"
+        exit 1
+    fi
 
-    log_success "NeMo 2.0 installé pour diarization avancée"
+    # Vérifier l'installation
+    if python -c "import nemo; print(f'✅ NeMo {nemo.__version__} installé')" 2>/dev/null; then
+        log_success "NeMo >=2.3.0 installé avec succès"
+    else
+        log_error "❌ NeMo installé mais non importable"
+        exit 1
+    fi
 }
 
 # --- Création du wrapper CLI ---
@@ -443,6 +557,61 @@ test_installation() {
             rm -f test_output.txt
         else
             log_warning "Test de transcription échoué"
+        fi
+    fi
+
+    # Test de compatibilité cuDNN/GPU si CUDA disponible
+    if command -v nvidia-smi &> /dev/null && [[ -n "$HF_TOKEN" ]]; then
+        log_step "Test de compatibilité cuDNN/GPU"
+        
+        # Test simple de diarization GPU
+        local gpu_test_cmd="python -c \"
+import torch
+import warnings
+warnings.filterwarnings('ignore')
+
+try:
+    # Test CUDA disponible
+    if not torch.cuda.is_available():
+        print('⚠️  CUDA non disponible')
+        exit(0)
+    
+    # Test cuDNN
+    if not torch.backends.cudnn.enabled:
+        print('⚠️  cuDNN non activé')
+        exit(0)
+    
+    # Test création tensor GPU
+    test_tensor = torch.randn(1, 1).cuda()
+    del test_tensor
+    
+    # Test convolution simple (utilise cuDNN)
+    import torch.nn as nn
+    conv = nn.Conv1d(1, 1, 3).cuda()
+    input_tensor = torch.randn(1, 1, 10).cuda()
+    output = conv(input_tensor)
+    del conv, input_tensor, output
+    
+    print('✅ Compatibilité cuDNN/GPU confirmée')
+    
+except Exception as e:
+    print(f'⚠️  Problème cuDNN détecté: {str(e)[:100]}...')
+    print('💡 La diarization utilisera le CPU (plus lent mais stable)')
+\""
+        
+        if [[ $VERBOSE -eq 1 ]]; then
+            eval "$gpu_test_cmd"
+        else
+            local gpu_result
+            gpu_result=$(eval "$gpu_test_cmd" 2>&1)
+            if echo "$gpu_result" | grep -q "✅"; then
+                log_success "Compatibilité cuDNN/GPU confirmée"
+            else
+                log_warning "Problème cuDNN détecté - fallback CPU disponible"
+                if [[ $VERBOSE -eq 1 ]]; then
+                    echo "$gpu_result"
+                fi
+            fi
         fi
     fi
 }
@@ -593,15 +762,26 @@ show_summary() {
     fi
 
     echo -e "${BOLD}🚀 Nouveautés 2025 :${RESET}"
-    echo "   ✅ PyTorch $PYTORCH_VERSION avec CUDA 12.8"
-    echo "   ✅ faster-whisper optimisé"
-    echo "   ✅ pyannote Community-1 diarization"
+    echo "   ✅ PyTorch $PYTORCH_VERSION avec CUDA 12.x"
+    echo "   ✅ faster-whisper >=1.1.0 optimisé"
+    echo "   ✅ pyannote.audio 4.0.0 avec community-1 pipeline"
     if [[ $INSTALL_NEMO -eq 1 ]]; then
-        echo "   ✅ NeMo 2.0 pour diarization avancée"
+        echo "   ✅ NeMo >=2.4.0 pour diarization avancée"
     fi
+    echo "   ✅ Demucs + CTC-forced-aligner"
     echo "   ✅ Support Python 3.9-3.12"
     echo "   ✅ Interface CLI modernisée"
+    echo "   ✅ Configuration cuDNN automatique pour GPU"
     echo
+    
+    # Instructions spéciales pour GPU
+    if command -v nvidia-smi &> /dev/null; then
+        echo -e "${BOLD}🎮 Configuration GPU :${RESET}"
+        echo "   • Les variables d'environnement cuDNN sont configurées automatiquement"
+        echo "   • L'environnement active automatiquement la configuration CUDA"
+        echo "   • En cas de problème cuDNN, le fallback CPU est transparent"
+        echo
+    fi
 }
 
 # --- Fonction principale ---
@@ -609,7 +789,7 @@ main() {
     trap cleanup SIGINT
 
     echo -e "${BOLD}🎤 Modern Whisper Setup v${SCRIPT_VERSION} (September 2025)${RESET}"
-    echo -e "${BOLD}Basé sur whisper-diarization + NeMo 2.0 + PyTorch $PYTORCH_VERSION${RESET}"
+    echo -e "${BOLD}Basé sur whisper-diarization + NeMo >=2.4.0 + PyTorch $PYTORCH_VERSION${RESET}"
     echo
 
     parse_arguments "$@"

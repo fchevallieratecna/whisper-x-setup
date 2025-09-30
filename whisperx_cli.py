@@ -118,37 +118,45 @@ class WhisperDiarizeProcessor:
 
     def load_diarization_model(self, debug: bool = False) -> None:
         """Load diarization model (pyannote or NeMo)"""
+        if debug:
+            print(f"🔧 Debug: PYANNOTE_AVAILABLE = {PYANNOTE_AVAILABLE}")
+            print(f"🔧 Debug: HF token provided = {bool(self.hf_token)}")
+            print(f"🔧 Debug: Backend = {self.diarization_backend}")
+        
         if not self.hf_token and self.diarization_backend == "pyannote":
-            if debug:
-                print("⚠️  No HF token provided, diarization disabled")
+            print("⚠️  No HF token provided, diarization disabled")
             return
 
-        try:
-            if self.diarization_backend == "pyannote" and PYANNOTE_AVAILABLE:
+        if self.diarization_backend == "pyannote" and PYANNOTE_AVAILABLE:
+            if debug:
+                print("Loading pyannote speaker-diarization-community-1...")
+
+            self.diarization_pipeline = Pipeline.from_pretrained(
+                "pyannote/speaker-diarization-community-1",
+                token=self.hf_token
+            )
+
+            # Force GPU for diarization - no fallback!
+            if self.device == "cuda" and torch.cuda.is_available():
+                self.diarization_pipeline.to(torch.device("cuda"))
                 if debug:
-                    print("Loading pyannote speaker-diarization-community-1...")
-
-                self.diarization_pipeline = Pipeline.from_pretrained(
-                    "pyannote/speaker-diarization-community-1",
-                    use_auth_token=self.hf_token
-                )
-
-                if self.device == "cuda" and torch.cuda.is_available():
-                    self.diarization_pipeline.to(torch.device("cuda"))
-
-            elif self.diarization_backend == "nemo" and NEMO_AVAILABLE:
-                if debug:
-                    print("Loading NeMo diarization model...")
-                # NeMo setup would go here
-                pass
+                    print("🚀 Diarization pipeline moved to CUDA")
             else:
                 if debug:
-                    print("⚠️  Diarization backend not available, using transcription only")
+                    print("💻 Using CPU for diarization")
+                    
+            if debug:
+                print("✅ Pyannote pipeline loaded successfully")
 
-        except Exception as e:
-            print(f"⚠️  Diarization model loading failed: {e}")
-            print("Continuing with transcription only...")
-            self.diarization_pipeline = None
+        elif self.diarization_backend == "nemo" and NEMO_AVAILABLE:
+            if debug:
+                print("Loading NeMo diarization model...")
+            # NeMo setup would go here
+            pass
+        else:
+            print("⚠️  Diarization backend not available, using transcription only")
+            print(f"   PYANNOTE_AVAILABLE: {PYANNOTE_AVAILABLE}")
+            print(f"   NEMO_AVAILABLE: {NEMO_AVAILABLE}")
 
     def transcribe_audio(self,
                         audio_path: str,
@@ -213,7 +221,7 @@ class WhisperDiarizeProcessor:
             raise
 
     def diarize_audio(self, audio_path: str, num_speakers: Optional[int] = None, debug: bool = False) -> Optional[Dict]:
-        """Perform speaker diarization"""
+        """Perform speaker diarization with audio preprocessing"""
 
         if not self.diarization_pipeline:
             if debug:
@@ -224,26 +232,188 @@ class WhisperDiarizeProcessor:
             if debug:
                 print("Performing speaker diarization...")
 
+            # Preprocess audio for pyannote compatibility
+            import tempfile
+            
+            # Load audio and ensure proper format for pyannote
+            try:
+                # Load audio with torchaudio (handles various formats)
+                waveform, sample_rate = torchaudio.load(audio_path)
+                
+                if debug:
+                    print(f"🔧 Debug: Original audio - Shape: {waveform.shape}, Sample rate: {sample_rate}")
+                
+                # Convert to mono if stereo
+                if waveform.shape[0] > 1:
+                    waveform = torch.mean(waveform, dim=0, keepdim=True)
+                    if debug:
+                        print("🔧 Debug: Converted stereo to mono")
+                
+                # Resample to 16kHz if needed (pyannote expects 16kHz)
+                target_sample_rate = 16000
+                if sample_rate != target_sample_rate:
+                    resampler = torchaudio.transforms.Resample(sample_rate, target_sample_rate)
+                    waveform = resampler(waveform)
+                    if debug:
+                        print(f"🔧 Debug: Resampled from {sample_rate}Hz to {target_sample_rate}Hz")
+                
+                # Create temporary file with proper format
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
+                    temp_audio_path = tmp_file.name
+                    
+                # Save preprocessed audio
+                torchaudio.save(temp_audio_path, waveform, target_sample_rate)
+                
+                if debug:
+                    print(f"🔧 Debug: Preprocessed audio saved to: {temp_audio_path}")
+                    # Verify the saved file
+                    check_waveform, check_sr = torchaudio.load(temp_audio_path)
+                    print(f"🔧 Debug: Verified - Shape: {check_waveform.shape}, Sample rate: {check_sr}")
+                
+            except Exception as audio_error:
+                if debug:
+                    print(f"🔧 Debug: Audio preprocessing failed: {audio_error}")
+                    print("🔧 Debug: Falling back to original file")
+                temp_audio_path = audio_path
+
             # Configure diarization
             diarization_options = {}
             if num_speakers:
                 diarization_options["num_speakers"] = num_speakers
 
-            diarization = self.diarization_pipeline(audio_path, **diarization_options)
+            # Run diarization on preprocessed audio
+            diarization = self.diarization_pipeline(temp_audio_path, **diarization_options)
 
-            # Convert to dict format
+            # Clean up temporary file
+            if temp_audio_path != audio_path:
+                try:
+                    os.unlink(temp_audio_path)
+                    if debug:
+                        print("🔧 Debug: Temporary file cleaned up")
+                except:
+                    pass
+
+            # Convert to dict format - handle different pyannote API versions
             diarization_result = []
-            for turn, _, speaker in diarization.itertracks(yield_label=True):
-                diarization_result.append({
-                    "start": turn.start,
-                    "end": turn.end,
-                    "speaker": speaker
-                })
+            
+            if debug:
+                print(f"🔧 Debug: Diarization type: {type(diarization)}")
+                print(f"🔧 Debug: Available methods: {[m for m in dir(diarization) if not m.startswith('_')]}")
+            
+            # Try different API methods in order of preference
+            try:
+                # Pyannote 4.0+ DiarizeOutput - access speaker_diarization attribute
+                if hasattr(diarization, 'speaker_diarization'):
+                    annotation = diarization.speaker_diarization
+                    if debug:
+                        print(f"🔧 Debug: Using pyannote 4.0+ DiarizeOutput.speaker_diarization: {type(annotation)}")
+                    
+                    # Use itertracks on the annotation object
+                    if hasattr(annotation, 'itertracks'):
+                        for turn, _, speaker in annotation.itertracks(yield_label=True):
+                            diarization_result.append({
+                                "start": turn.start,
+                                "end": turn.end,
+                                "speaker": speaker
+                            })
+                    elif hasattr(annotation, 'itersegments'):
+                        for segment, _, speaker in annotation.itersegments(yield_label=True):
+                            diarization_result.append({
+                                "start": segment.start,
+                                "end": segment.end,
+                                "speaker": speaker
+                            })
+                    else:
+                        raise AttributeError(f"Annotation object has no iteration method: {type(annotation)}")
+                
+                # Pyannote 4.0+ API - direct itersegments
+                elif hasattr(diarization, 'itersegments'):
+                    if debug:
+                        print("🔧 Debug: Using pyannote 4.0+ API (itersegments)")
+                    for segment, _, speaker in diarization.itersegments(yield_label=True):
+                        diarization_result.append({
+                            "start": segment.start,
+                            "end": segment.end,
+                            "speaker": speaker
+                        })
+                
+                # Pyannote 3.x API - itertracks
+                elif hasattr(diarization, 'itertracks'):
+                    if debug:
+                        print("🔧 Debug: Using pyannote 3.x API (itertracks)")
+                    for turn, _, speaker in diarization.itertracks(yield_label=True):
+                        diarization_result.append({
+                            "start": turn.start,
+                            "end": turn.end,
+                            "speaker": speaker
+                        })
+                
+                # Try to access annotation attribute and use its methods
+                elif hasattr(diarization, 'annotation'):
+                    annotation = diarization.annotation
+                    if debug:
+                        print(f"🔧 Debug: Using annotation attribute: {type(annotation)}")
+                    
+                    if hasattr(annotation, 'itertracks'):
+                        for turn, _, speaker in annotation.itertracks(yield_label=True):
+                            diarization_result.append({
+                                "start": turn.start,
+                                "end": turn.end,
+                                "speaker": speaker
+                            })
+                    elif hasattr(annotation, 'itersegments'):
+                        for segment, _, speaker in annotation.itersegments(yield_label=True):
+                            diarization_result.append({
+                                "start": segment.start,
+                                "end": segment.end,
+                                "speaker": speaker
+                            })
+                    else:
+                        raise AttributeError(f"Annotation object has no iteration method: {type(annotation)}")
+                
+                else:
+                    # Last resort: try to find any iteration method
+                    if debug:
+                        print("🔧 Debug: No standard iteration method found, trying fallbacks...")
+                    
+                    # Check for common attributes that might contain the data
+                    for attr_name in ['segments', 'tracks', 'labels', 'data']:
+                        if hasattr(diarization, attr_name):
+                            data = getattr(diarization, attr_name)
+                            if debug:
+                                print(f"🔧 Debug: Found {attr_name}: {type(data)}")
+                            
+                            # Try to iterate over the data
+                            if hasattr(data, '__iter__'):
+                                for item in data:
+                                    if hasattr(item, 'start') and hasattr(item, 'end'):
+                                        speaker = getattr(item, 'speaker', getattr(item, 'label', 'UNKNOWN'))
+                                        diarization_result.append({
+                                            "start": item.start,
+                                            "end": item.end,
+                                            "speaker": speaker
+                                        })
+                                break
+                    else:
+                        raise AttributeError(f"Cannot find diarization data in {type(diarization)}")
+                        
+            except Exception as api_error:
+                if debug:
+                    print(f"🔧 Debug: API iteration failed: {api_error}")
+                    print(f"🔧 Debug: Full diarization object: {diarization}")
+                raise
+
+            if debug:
+                print(f"🔧 Debug: Found {len(diarization_result)} speaker segments")
 
             return {"diarization": diarization_result}
 
         except Exception as e:
             print(f"⚠️  Diarization error: {e}")
+            if debug:
+                import traceback
+                print("🔧 Debug: Full traceback:")
+                traceback.print_exc()
             return None
 
     def align_transcription_with_speakers(self, transcription: Dict, diarization: Optional[Dict]) -> Dict:
@@ -291,6 +461,12 @@ def suppress_output(func, *args, **kwargs):
 
 def maybe_call(func, debug, *args, **kwargs):
     """Call function with optional output suppression"""
+    # Add debug parameter to kwargs if the function accepts it
+    import inspect
+    sig = inspect.signature(func)
+    if 'debug' in sig.parameters:
+        kwargs['debug'] = debug
+    
     if debug:
         return func(*args, **kwargs)
     else:
@@ -456,20 +632,20 @@ Examples:
         # Load models
         print("🔄 [20%] Loading Whisper model...")
         start_time = time.time()
-        maybe_call(processor.load_model, args.debug, debug=args.debug)
+        maybe_call(processor.load_model, args.debug)
         print(f"✅ [25%] Whisper model loaded ({time.time() - start_time:.1f}s)")
 
         if args.diarize:
             print("🔄 [30%] Loading diarization model...")
             start_time = time.time()
-            maybe_call(processor.load_diarization_model, args.debug, debug=args.debug)
+            maybe_call(processor.load_diarization_model, args.debug)
             print(f"✅ [35%] Diarization model loaded ({time.time() - start_time:.1f}s)")
 
         # Transcribe
         print("🔄 [40%] Transcribing audio...")
         start_time = time.time()
         transcription = maybe_call(processor.transcribe_audio, args.debug,
-                                  args.audio_file, args.batch_size, args.initial_prompt, args.debug)
+                                  args.audio_file, args.batch_size, args.initial_prompt)
         print(f"✅ [70%] Transcription completed ({time.time() - start_time:.1f}s)")
 
         # Diarize
@@ -478,13 +654,21 @@ Examples:
             print("🔄 [75%] Performing speaker diarization...")
             start_time = time.time()
             diarization_result = maybe_call(processor.diarize_audio, args.debug,
-                                          args.audio_file, args.nb_speaker, args.debug)
+                                          args.audio_file, args.nb_speaker)
             print(f"✅ [90%] Diarization completed ({time.time() - start_time:.1f}s)")
 
         # Align speakers with transcription
         if diarization_result:
             print("🔄 [95%] Aligning speakers with transcription...")
+            if args.debug:
+                print(f"🔧 Debug: Diarization result has {len(diarization_result.get('diarization', []))} speaker segments")
             transcription = processor.align_transcription_with_speakers(transcription, diarization_result)
+            if args.debug:
+                speakers_found = [seg.get("speaker", "NONE") for seg in transcription["segments"]]
+                print(f"🔧 Debug: Speakers assigned: {speakers_found}")
+        else:
+            if args.debug:
+                print("🔧 Debug: No diarization result to align")
 
         # Save results
         print("🔄 [98%] Saving results...")
