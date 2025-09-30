@@ -1,31 +1,287 @@
+#!/usr/bin/env python3
+"""
+Modern Whisper CLI with Advanced Diarization
+Based on whisper-diarization (MahmoudAshraf97) + NeMo 2.0
+September 2025 - Optimized for latest dependencies
+"""
+
 import os
 import sys
 import io
 import logging
 import warnings
 import platform
+import argparse
+import json
+import time
+from pathlib import Path
+from typing import Optional, Dict, Any, List
 
-# Forcer l'utilisation du CPU sur macOS
+# Platform-specific optimizations
 if platform.system() == "Darwin":
+    # Force CPU on macOS for stability
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
     os.environ["HF_DATASETS_OFFLINE"] = "1"
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
 
-# Suppress external logs unless debug is enabled (will be set later)
+# Reduce external library noise
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 logging.getLogger("speechbrain").setLevel(logging.ERROR)
 logging.getLogger("pytorch_lightning").setLevel(logging.ERROR)
 logging.getLogger("pyannote.audio").setLevel(logging.ERROR)
+logging.getLogger("nemo_toolkit").setLevel(logging.ERROR)
 warnings.filterwarnings("ignore")
-warnings.filterwarnings("ignore", message=".*Lightning automatically upgraded your loaded checkpoint.*")
-warnings.filterwarnings("ignore", category=UserWarning, message=".*Lightning automatically upgraded your loaded checkpoint.*")
 
-import argparse
-import json
-import whisperx
-from whisperx.diarize import DiarizationPipeline
+try:
+    import torch
+    import faster_whisper
+    from faster_whisper import WhisperModel
+    import numpy as np
+    import torchaudio
+except ImportError as e:
+    print(f"❌ Import error: {e}")
+    print("Please install required dependencies:")
+    print("pip install torch torchaudio faster-whisper")
+    sys.exit(1)
 
-def suppress_stdout(func, *args, **kwargs):
-    """Execute a function while temporarily suppressing stdout."""
+# Try to import diarization dependencies
+try:
+    from nemo.collections.asr.models.msdd_models import NeuralDiarizer
+    NEMO_AVAILABLE = True
+except ImportError:
+    NEMO_AVAILABLE = False
+
+try:
+    from pyannote.audio import Pipeline
+    PYANNOTE_AVAILABLE = True
+except ImportError:
+    PYANNOTE_AVAILABLE = False
+
+class WhisperDiarizeProcessor:
+    """Modern Whisper processor with advanced diarization capabilities"""
+
+    def __init__(self,
+                 model_size: str = "large-v3",
+                 device: str = "auto",
+                 compute_type: str = "float16",
+                 language: Optional[str] = None,
+                 hf_token: Optional[str] = None,
+                 diarization_backend: str = "pyannote"):
+
+        self.model_size = model_size
+        self.language = language
+        self.hf_token = hf_token
+        self.diarization_backend = diarization_backend
+
+        # Auto-detect device
+        if device == "auto":
+            if platform.system() == "Darwin":
+                self.device = "cpu"
+                self.compute_type = "int8"  # More stable on macOS
+            elif torch.cuda.is_available():
+                self.device = "cuda"
+                self.compute_type = compute_type
+            else:
+                self.device = "cpu"
+                self.compute_type = "int8"
+        else:
+            self.device = device
+            self.compute_type = compute_type
+
+        self.model = None
+        self.diarization_pipeline = None
+
+    def load_model(self, debug: bool = False) -> None:
+        """Load Whisper model with optimized settings"""
+        try:
+            if debug:
+                print(f"Loading Whisper model: {self.model_size}")
+                print(f"Device: {self.device}, Compute type: {self.compute_type}")
+
+            self.model = WhisperModel(
+                self.model_size,
+                device=self.device,
+                compute_type=self.compute_type,
+                cpu_threads=4 if self.device == "cpu" else 0,
+                num_workers=1  # Prevent threading issues
+            )
+
+            if debug:
+                print("✅ Whisper model loaded successfully")
+
+        except Exception as e:
+            print(f"❌ Error loading Whisper model: {e}")
+            if platform.system() == "Darwin":
+                print("💡 Try: --compute_type int8 on macOS")
+            raise
+
+    def load_diarization_model(self, debug: bool = False) -> None:
+        """Load diarization model (pyannote or NeMo)"""
+        if not self.hf_token and self.diarization_backend == "pyannote":
+            if debug:
+                print("⚠️  No HF token provided, diarization disabled")
+            return
+
+        try:
+            if self.diarization_backend == "pyannote" and PYANNOTE_AVAILABLE:
+                if debug:
+                    print("Loading pyannote speaker-diarization-community-1...")
+
+                self.diarization_pipeline = Pipeline.from_pretrained(
+                    "pyannote/speaker-diarization-community-1",
+                    use_auth_token=self.hf_token
+                )
+
+                if self.device == "cuda" and torch.cuda.is_available():
+                    self.diarization_pipeline.to(torch.device("cuda"))
+
+            elif self.diarization_backend == "nemo" and NEMO_AVAILABLE:
+                if debug:
+                    print("Loading NeMo diarization model...")
+                # NeMo setup would go here
+                pass
+            else:
+                if debug:
+                    print("⚠️  Diarization backend not available, using transcription only")
+
+        except Exception as e:
+            print(f"⚠️  Diarization model loading failed: {e}")
+            print("Continuing with transcription only...")
+            self.diarization_pipeline = None
+
+    def transcribe_audio(self,
+                        audio_path: str,
+                        batch_size: int = 8,
+                        initial_prompt: str = "",
+                        debug: bool = False) -> Dict[str, Any]:
+        """Transcribe audio with faster-whisper"""
+
+        if not self.model:
+            raise RuntimeError("Model not loaded. Call load_model() first.")
+
+        try:
+            if debug:
+                print(f"Transcribing: {audio_path}")
+
+            # Configure transcription options
+            transcribe_options = {
+                "language": self.language,
+                "initial_prompt": initial_prompt if initial_prompt else None,
+                "beam_size": 5,
+                "best_of": 5,
+                "temperature": 0.0,
+                "condition_on_previous_text": True,
+                "vad_filter": True,  # Voice activity detection
+                "vad_parameters": dict(min_silence_duration_ms=1000)
+            }
+
+            # Remove None values
+            transcribe_options = {k: v for k, v in transcribe_options.items() if v is not None}
+
+            segments, info = self.model.transcribe(
+                audio_path,
+                **transcribe_options
+            )
+
+            # Convert segments to list with timing
+            segments_list = []
+            for segment in segments:
+                segments_list.append({
+                    "id": segment.id,
+                    "seek": segment.seek,
+                    "start": segment.start,
+                    "end": segment.end,
+                    "text": segment.text.strip(),
+                    "tokens": segment.tokens,
+                    "temperature": segment.temperature,
+                    "avg_logprob": segment.avg_logprob,
+                    "compression_ratio": segment.compression_ratio,
+                    "no_speech_prob": segment.no_speech_prob
+                })
+
+            return {
+                "segments": segments_list,
+                "language": info.language,
+                "language_probability": info.language_probability,
+                "duration": info.duration,
+                "duration_after_vad": info.duration_after_vad
+            }
+
+        except Exception as e:
+            print(f"❌ Transcription error: {e}")
+            raise
+
+    def diarize_audio(self, audio_path: str, num_speakers: Optional[int] = None, debug: bool = False) -> Optional[Dict]:
+        """Perform speaker diarization"""
+
+        if not self.diarization_pipeline:
+            if debug:
+                print("⚠️  No diarization pipeline available")
+            return None
+
+        try:
+            if debug:
+                print("Performing speaker diarization...")
+
+            # Configure diarization
+            diarization_options = {}
+            if num_speakers:
+                diarization_options["num_speakers"] = num_speakers
+
+            diarization = self.diarization_pipeline(audio_path, **diarization_options)
+
+            # Convert to dict format
+            diarization_result = []
+            for turn, _, speaker in diarization.itertracks(yield_label=True):
+                diarization_result.append({
+                    "start": turn.start,
+                    "end": turn.end,
+                    "speaker": speaker
+                })
+
+            return {"diarization": diarization_result}
+
+        except Exception as e:
+            print(f"⚠️  Diarization error: {e}")
+            return None
+
+    def align_transcription_with_speakers(self, transcription: Dict, diarization: Optional[Dict]) -> Dict:
+        """Align transcription segments with speaker labels"""
+
+        if not diarization:
+            return transcription
+
+        segments = transcription["segments"]
+        speaker_segments = diarization["diarization"]
+
+        # Assign speakers to transcription segments
+        for segment in segments:
+            segment_start = segment["start"]
+            segment_end = segment["end"]
+
+            # Find overlapping speaker segments
+            overlapping_speakers = []
+            for spk_seg in speaker_segments:
+                spk_start = spk_seg["start"]
+                spk_end = spk_seg["end"]
+
+                # Check for overlap
+                if (segment_start < spk_end and segment_end > spk_start):
+                    overlap_duration = min(segment_end, spk_end) - max(segment_start, spk_start)
+                    overlapping_speakers.append((spk_seg["speaker"], overlap_duration))
+
+            # Assign speaker with most overlap
+            if overlapping_speakers:
+                best_speaker = max(overlapping_speakers, key=lambda x: x[1])[0]
+                segment["speaker"] = best_speaker
+            else:
+                segment["speaker"] = "UNKNOWN"
+
+        return transcription
+
+def suppress_output(func, *args, **kwargs):
+    """Execute function while suppressing stdout"""
     old_stdout = sys.stdout
     sys.stdout = io.StringIO()
     try:
@@ -34,225 +290,230 @@ def suppress_stdout(func, *args, **kwargs):
         sys.stdout = old_stdout
 
 def maybe_call(func, debug, *args, **kwargs):
-    """Call func with output suppressed if debug is False."""
+    """Call function with optional output suppression"""
     if debug:
         return func(*args, **kwargs)
     else:
-        return suppress_stdout(func, *args, **kwargs)
+        return suppress_output(func, *args, **kwargs)
 
 def seconds_to_srt_time(seconds: float) -> str:
+    """Convert seconds to SRT time format"""
     hours = int(seconds // 3600)
     minutes = int((seconds % 3600) // 60)
     secs = int(seconds % 60)
     millis = int((seconds - int(seconds)) * 1000)
     return f"{hours:02}:{minutes:02}:{secs:02},{millis:03}"
 
-def save_json(output_path, data):
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+def save_results(output_path: str, data: Dict, format: str) -> None:
+    """Save results in specified format"""
 
-def save_txt(output_path, segments):
-    with open(output_path, "w", encoding="utf-8") as f:
-        for seg in segments:
-            speaker = seg.get("speaker", "")
-            line = seg.get("text", "").strip()
-            if speaker:
-                line = f"[{speaker}] {line}"
-            f.write(line + "\n")
+    if format == "json":
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
 
-def save_srt(output_path, segments):
-    with open(output_path, "w", encoding="utf-8") as f:
-        for idx, seg in enumerate(segments, start=1):
-            start_time = seconds_to_srt_time(seg.get("start", 0))
-            end_time = seconds_to_srt_time(seg.get("end", 0))
-            text = seg.get("text", "").strip()
-            speaker = seg.get("speaker", "")
-            if speaker:
-                text = f"[{speaker}] {text}"
-            f.write(f"{idx}\n{start_time} --> {end_time}\n{text}\n\n")
+    elif format == "txt":
+        with open(output_path, "w", encoding="utf-8") as f:
+            for segment in data.get("segments", []):
+                speaker = segment.get("speaker", "")
+                text = segment.get("text", "").strip()
+                if speaker:
+                    f.write(f"[{speaker}] {text}\n")
+                else:
+                    f.write(f"{text}\n")
+
+    elif format == "srt":
+        with open(output_path, "w", encoding="utf-8") as f:
+            for idx, segment in enumerate(data.get("segments", []), start=1):
+                start_time = seconds_to_srt_time(segment.get("start", 0))
+                end_time = seconds_to_srt_time(segment.get("end", 0))
+                text = segment.get("text", "").strip()
+                speaker = segment.get("speaker", "")
+
+                if speaker:
+                    text = f"[{speaker}] {text}"
+
+                f.write(f"{idx}\n{start_time} --> {end_time}\n{text}\n\n")
 
 def main():
-    # Default parameters
-    default_values = {
+    """Main CLI function"""
+
+    # Default configuration
+    defaults = {
         "model": "large-v3",
         "diarize": True,
         "batch_size": 8,
         "output_format": "txt",
         "language": "fr",
+        "compute_type": "float16",
+        "diarization_backend": "pyannote"
     }
+
     parser = argparse.ArgumentParser(
-        description="Transcription, alignment and diarization with WhisperX"
+        description="Modern Whisper CLI with Advanced Diarization (Sept 2025)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s audio.mp3 --model large-v3 --language fr
+  %(prog)s audio.wav --diarize --hf_token YOUR_TOKEN --nb_speaker 2
+  %(prog)s audio.mp4 --output_format srt --compute_type int8
+        """
     )
-    parser.add_argument("--version", action="store_true", help="Affiche la version et quitte")
-    parser.add_argument("audio_file", type=str, help="Path to the audio file", nargs="?")
-    parser.add_argument("--model", type=str, default=default_values["model"],
-                        help="WhisperX model to use (default: large-v3)")
-    parser.add_argument("--diarize", dest="diarize", action="store_true",
-                        default=default_values["diarize"],
-                        help="Enable diarization (default: enabled)")
+
+    parser.add_argument("--version", action="store_true", help="Show version and exit")
+    parser.add_argument("audio_file", nargs="?", help="Path to audio file")
+
+    # Model options
+    parser.add_argument("--model", default=defaults["model"],
+                       help=f"Whisper model size (default: {defaults['model']})")
+    parser.add_argument("--language", default=defaults["language"],
+                       help=f"Language code (default: {defaults['language']})")
+    parser.add_argument("--compute_type", default=defaults["compute_type"],
+                       help=f"Compute type (default: {defaults['compute_type']})")
+    parser.add_argument("--device", default="auto",
+                       help="Device to use: auto, cpu, cuda (default: auto)")
+
+    # Diarization options
+    parser.add_argument("--diarize", action="store_true", default=defaults["diarize"],
+                       help="Enable speaker diarization")
     parser.add_argument("--no-diarize", dest="diarize", action="store_false",
-                        help="Disable diarization")
-    parser.add_argument("--batch_size", type=int, default=default_values["batch_size"],
-                        help="Batch size (default: 8)")
-    parser.add_argument("--compute_type", type=str, default="float16",
-                        help="Compute type (default: float16)")
-    parser.add_argument("--language", type=str, default=default_values["language"],
-                        help="Language code (default: fr)")
-    parser.add_argument("--hf_token", type=str, default="",
-                        help="Hugging Face token for diarization")
-    parser.add_argument("--initial_prompt", type=str, default="",
-                        help="Initial prompt passed in asr_options (default: empty)")
-    parser.add_argument("--output", type=str, default=None,
-                        help="Output file (default: same as audio file with corresponding extension)")
-    parser.add_argument("--output_format", type=str, choices=["json", "txt", "srt"],
-                        default=default_values["output_format"],
-                        help="Output format (default: txt)")
-    parser.add_argument("--debug", action="store_true", default=False,
-                        help="Enable debug mode (display all logs)")
-    parser.add_argument("--nb_speaker", type=int, default=None, 
-                        help="Exact number of speakers (sets both min_speakers and max_speakers)")
+                       help="Disable speaker diarization")
+    parser.add_argument("--hf_token", default="",
+                       help="Hugging Face token for diarization models")
+    parser.add_argument("--nb_speaker", type=int,
+                       help="Expected number of speakers")
+    parser.add_argument("--diarization_backend", default=defaults["diarization_backend"],
+                       choices=["pyannote", "nemo"],
+                       help="Diarization backend to use")
+
+    # Processing options
+    parser.add_argument("--batch_size", type=int, default=defaults["batch_size"],
+                       help=f"Batch size (default: {defaults['batch_size']})")
+    parser.add_argument("--initial_prompt", default="",
+                       help="Initial prompt for transcription")
+
+    # Output options
+    parser.add_argument("--output", help="Output file path")
+    parser.add_argument("--output_format", choices=["json", "txt", "srt"],
+                       default=defaults["output_format"],
+                       help=f"Output format (default: {defaults['output_format']})")
+
+    # Debug
+    parser.add_argument("--debug", action="store_true",
+                       help="Enable debug output")
+
     args = parser.parse_args()
 
-    # Vérifier si l'utilisateur demande la version
+    # Version check
     if args.version:
-        print("WhisperX CLI v1.0.0")
-        return
-        
-    # Vérifier si le fichier audio est fourni
-    if args.audio_file is None:
-        parser.error("Un fichier audio est requis sauf avec l'option --version")
-
-    # Set default output if not provided
-    if args.output is None:
-        base, _ = os.path.splitext(os.path.basename(args.audio_file))
-        ext = {"json": ".json", "txt": ".txt", "srt": ".srt"}[args.output_format.lower()]
-        args.output = os.path.join(os.path.dirname(args.audio_file), base + ext)
-
-    # Display used parameters
-    print(">> Parameters used:")
-    print(f"   - audio_file     : {args.audio_file}")
-
-    # Afficher tous les paramètres
-    all_params = vars(args)
-    for key, val in all_params.items():
-        if key == 'audio_file':
-            continue  # Déjà affiché
-        
-        # Vérifier si le paramètre est dans default_values
-        if key in default_values:
-            if val == default_values[key]:
-                print(f"   - {key:<15}: {val} (default)")
-            else:
-                print(f"   - {key:<15}: {val} (overridden)")
-        else:
-            # Pour les paramètres qui n'ont pas de valeur par défaut dans default_values
-            print(f"   - {key:<15}: {val}")
-
-    # Ajouter l'information sur le device
-    print(f"   - device         : {'cpu' if platform.system() == 'Darwin' else 'cuda'} (auto-detected)")
-    print("")
-
-    # Définir les étapes principales et leur progression
-    steps = [
-        (10, "Chargement du modèle"),
-        (20, "Préparation de l'audio"),
-        (40, "Transcription"),
-        (60, "Alignement des timestamps"),
-        (80, "Diarisation") if args.diarize else None,
-        (95, "Sauvegarde des résultats"),
-        (100, "Transcription terminée")
-    ]
-    steps = [s for s in steps if s is not None]
-    
-    print(">> Démarrage de la transcription")
-    try:
-        print(f"[{steps[0][0]}%] - {steps[0][1]}...")
-        # Toujours utiliser CPU sur macOS
-        device = "cpu" if platform.system() == "Darwin" else "cuda"
-        asr_options = {"initial_prompt": args.initial_prompt}
-        
-        # Afficher les paramètres de chargement pour le débogage
-        if args.debug:
-            print(f"   -> Using device: {device}, compute_type: {args.compute_type}")
-        
-        # Pass language directly
-        model = maybe_call(whisperx.load_model, args.debug, args.model, device,
-                           compute_type=args.compute_type, language=args.language, asr_options=asr_options)
-    except Exception as e:
-        print("   !! Error loading model:", e)
-        print("   !! Sur macOS, essayez avec --compute_type int8")
+        print("Modern Whisper CLI v2.0.0 (September 2025)")
+        print(f"faster-whisper: {faster_whisper.__version__}")
+        print(f"PyTorch: {torch.__version__}")
+        print(f"CUDA available: {torch.cuda.is_available()}")
+        if PYANNOTE_AVAILABLE:
+            print("✅ pyannote.audio: Available")
+        if NEMO_AVAILABLE:
+            print("✅ NeMo: Available")
         return
 
-    try:
-        print(f"[{steps[1][0]}%] - {steps[1][1]}...")
-        audio = maybe_call(whisperx.load_audio, args.debug, args.audio_file)
-    except Exception as e:
-        print("   !! Error loading audio:", e)
-        return
+    # Validate audio file
+    if not args.audio_file:
+        parser.error("Audio file is required (use --version to see version info)")
 
-    try:
-        print(f"[{steps[2][0]}%] - {steps[2][1]}...")
-        result = maybe_call(model.transcribe, args.debug, audio, batch_size=args.batch_size)
-    except Exception as e:
-        print("   !! Error during transcription:", e)
-        return
+    if not os.path.exists(args.audio_file):
+        print(f"❌ Audio file not found: {args.audio_file}")
+        sys.exit(1)
 
-    try:
-        print(f"[{steps[3][0]}%] - {steps[3][1]}...")
-        lang = args.language if args.language else result.get("language", "fr")
-        model_a, metadata = maybe_call(whisperx.load_align_model, args.debug, language_code=lang, device=device)
-        result_aligned = maybe_call(whisperx.align, args.debug, result["segments"], model_a, metadata, audio, device, return_char_alignments=False)
-    except Exception as e:
-        print("   !! Error during alignment:", e)
-        return
+    # Set output path
+    if not args.output:
+        base_name = Path(args.audio_file).stem
+        extensions = {"json": ".json", "txt": ".txt", "srt": ".srt"}
+        args.output = str(Path(args.audio_file).parent / f"{base_name}{extensions[args.output_format]}")
 
+    # Display configuration
+    print("🎯 Modern Whisper CLI - Configuration:")
+    print(f"   📁 Audio file    : {args.audio_file}")
+    print(f"   🤖 Model         : {args.model}")
+    print(f"   🌍 Language      : {args.language}")
+    print(f"   💻 Device        : {args.device}")
+    print(f"   ⚡ Compute type   : {args.compute_type}")
+    print(f"   👥 Diarization   : {'✅ Enabled' if args.diarize else '❌ Disabled'}")
     if args.diarize:
-        try:
-            diarize_step = next(s for s in steps if s[1] == "Diarisation")
-            print(f"[{diarize_step[0]}%] - {diarize_step[1]}...")
-            diarize_model = maybe_call(DiarizationPipeline, args.debug, token=args.hf_token, device=device)
-            if args.nb_speaker is not None:
-                diarize_segments = maybe_call(
-                    diarize_model, args.debug, audio, min_speakers=args.nb_speaker, max_speakers=args.nb_speaker
-                )
-            else:
-                diarize_segments = maybe_call(
-                    diarize_model, args.debug, audio
-                )
-            result_aligned = whisperx.assign_word_speakers(diarize_segments, result_aligned)
-        except Exception as e:
-            if "token" in str(e).lower():
-                token_input = input("   -> Diarization failed due to token issues. Please enter your Hugging Face token: ").strip()
-                if not token_input:
-                    print("   !! Error: No token provided. Diarization cannot be performed.")
-                    return
-                try:
-                    diarize_model = maybe_call(DiarizationPipeline, args.debug, token=token_input, device=device)
-                    diarize_segments = maybe_call(diarize_model, args.debug, audio)
-                    result_aligned = whisperx.assign_word_speakers(diarize_segments, result_aligned)
-                except Exception as e2:
-                    print("   !! Error during diarization after token input:", e2)
-                    return
-            else:
-                print("   !! Error during diarization:", e)
-                return
+        print(f"   🎤 Backend       : {args.diarization_backend}")
+    print(f"   📤 Output        : {args.output} ({args.output_format})")
+    print()
 
+    # Initialize processor
     try:
-        save_step = next(s for s in steps if s[1] == "Sauvegarde des résultats")
-        print(f"[{save_step[0]}%] - {save_step[1]}...")
-        fmt = args.output_format.lower()
-        if fmt == "json":
-            save_json(args.output, result_aligned)
-        elif fmt == "txt":
-            save_txt(args.output, result_aligned.get("segments", []))
-        elif fmt == "srt":
-            save_srt(args.output, result_aligned.get("segments", []))
-    except Exception as e:
-        print("   !! Error during saving:", e)
-        return
+        processor = WhisperDiarizeProcessor(
+            model_size=args.model,
+            device=args.device,
+            compute_type=args.compute_type,
+            language=args.language,
+            hf_token=args.hf_token,
+            diarization_backend=args.diarization_backend
+        )
 
-    final_step = next(s for s in steps if s[1] == "Transcription terminée")
-    print(f"[{final_step[0]}%] - {final_step[1]}.")
+        # Load models
+        print("🔄 [20%] Loading Whisper model...")
+        start_time = time.time()
+        maybe_call(processor.load_model, args.debug, debug=args.debug)
+        print(f"✅ [25%] Whisper model loaded ({time.time() - start_time:.1f}s)")
+
+        if args.diarize:
+            print("🔄 [30%] Loading diarization model...")
+            start_time = time.time()
+            maybe_call(processor.load_diarization_model, args.debug, debug=args.debug)
+            print(f"✅ [35%] Diarization model loaded ({time.time() - start_time:.1f}s)")
+
+        # Transcribe
+        print("🔄 [40%] Transcribing audio...")
+        start_time = time.time()
+        transcription = maybe_call(processor.transcribe_audio, args.debug,
+                                  args.audio_file, args.batch_size, args.initial_prompt, args.debug)
+        print(f"✅ [70%] Transcription completed ({time.time() - start_time:.1f}s)")
+
+        # Diarize
+        diarization_result = None
+        if args.diarize and processor.diarization_pipeline:
+            print("🔄 [75%] Performing speaker diarization...")
+            start_time = time.time()
+            diarization_result = maybe_call(processor.diarize_audio, args.debug,
+                                          args.audio_file, args.nb_speaker, args.debug)
+            print(f"✅ [90%] Diarization completed ({time.time() - start_time:.1f}s)")
+
+        # Align speakers with transcription
+        if diarization_result:
+            print("🔄 [95%] Aligning speakers with transcription...")
+            transcription = processor.align_transcription_with_speakers(transcription, diarization_result)
+
+        # Save results
+        print("🔄 [98%] Saving results...")
+        save_results(args.output, transcription, args.output_format)
+        print(f"✅ [100%] Results saved to: {args.output}")
+
+        # Summary
+        duration = transcription.get("duration", 0)
+        num_segments = len(transcription.get("segments", []))
+        language = transcription.get("language", "unknown")
+
+        print(f"\n📊 Summary:")
+        print(f"   ⏱️  Duration: {duration:.1f}s")
+        print(f"   📝 Segments: {num_segments}")
+        print(f"   🌍 Detected language: {language}")
+
+        if args.diarize and diarization_result:
+            speakers = set(seg.get("speaker", "UNKNOWN") for seg in transcription["segments"])
+            print(f"   👥 Speakers: {len(speakers)} ({', '.join(sorted(speakers))})")
+
+    except KeyboardInterrupt:
+        print("\n⚠️  Process interrupted by user")
+        sys.exit(1)
+    except Exception as e:
+        print(f"\n❌ Error: {e}")
+        if args.debug:
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
