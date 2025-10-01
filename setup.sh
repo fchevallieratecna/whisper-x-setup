@@ -502,7 +502,7 @@ create_modern_wrapper() {
         activation_cmd="source \"${abs_path}/whisper_modern_env/bin/activate\""
     fi
 
-    cat > whisper_modern_cli << EOF
+    cat > whisperx_cli << EOF
 #!/bin/bash
 # Modern Whisper CLI Wrapper (September 2025)
 
@@ -519,16 +519,16 @@ ${activation_cmd}
 python "${abs_path}/whisperx_cli.py" "\$@"
 EOF
 
-    chmod +x whisper_modern_cli
+    chmod +x whisperx_cli
 
     # Installation globale
     if [[ "$(id -u)" -ne 0 ]]; then
-        sudo cp whisper_modern_cli /usr/local/bin/whisper_modern_cli
+        sudo cp whisperx_cli /usr/local/bin/whisperx_cli
     else
-        cp whisper_modern_cli /usr/local/bin/whisper_modern_cli
+        cp whisperx_cli /usr/local/bin/whisperx_cli
     fi
 
-    chmod +x /usr/local/bin/whisper_modern_cli
+    chmod +x /usr/local/bin/whisperx_cli
     WRAPPER_INSTALLED=1
 
     log_success "Wrapper CLI installé globalement"
@@ -539,7 +539,7 @@ test_installation() {
     log_step "Test de l'installation"
 
     # Vérifier que le CLI fonctionne
-    if ./whisper_modern_cli --version > /dev/null 2>&1; then
+    if ./whisperx_cli --version > /dev/null 2>&1; then
         log_success "CLI fonctionne correctement"
     else
         log_error "Problème avec le CLI"
@@ -550,7 +550,7 @@ test_installation() {
     if [[ -f "audio.mp3" ]]; then
         log_step "Test de transcription sur audio.mp3"
 
-        local test_cmd="./whisper_modern_cli audio.mp3 --model base --output test_output.txt --output_format txt"
+        local test_cmd="./whisperx_cli audio.mp3 --model large-v3 --output test_output.txt --output_format txt"
 
         if [[ "$(uname)" == "Darwin" ]]; then
             test_cmd+=" --compute_type int8"
@@ -745,7 +745,7 @@ cleanup() {
     fi
 
     if [[ $WRAPPER_INSTALLED -eq 1 ]]; then
-        sudo rm -f /usr/local/bin/whisper_modern_cli 2>/dev/null || true
+        sudo rm -f /usr/local/bin/whisperx_cli 2>/dev/null || true
         log_info "Wrapper désinstallé"
     fi
 
@@ -758,8 +758,8 @@ show_summary() {
     log_success "=== Installation terminée ===="
     echo
     echo -e "${BOLD}🎯 Commandes disponibles :${RESET}"
-    echo "   • ${BOLD}whisper_modern_cli${RESET} - CLI moderne avec diarization avancée"
-    echo "   • ${BOLD}whisper_modern_cli --version${RESET} - Informations sur la version"
+    echo "   • ${BOLD}whisperx_cli${RESET} - CLI moderne avec diarization avancée"
+    echo "   • ${BOLD}whisperx_cli --version${RESET} - Informations sur la version"
     echo
     
     echo -e "${BOLD}🌐 API Whisper :${RESET}"
@@ -770,14 +770,14 @@ show_summary() {
     echo
     echo -e "${BOLD}📝 Exemples d'utilisation :${RESET}"
     echo "   • Transcription simple:"
-    echo "     ${BLUE}whisper_modern_cli audio.mp3 --model large-v3 --language fr${RESET}"
+    echo "     ${BLUE}whisperx_cli audio.mp3 --model large-v3 --language fr${RESET}"
     echo
     echo "   • Avec diarization:"
-    echo "     ${BLUE}whisper_modern_cli audio.mp3 --diarize --hf_token YOUR_TOKEN --nb_speaker 2${RESET}"
+    echo "     ${BLUE}whisperx_cli audio.mp3 --diarize --hf_token YOUR_TOKEN --nb_speaker 2${RESET}"
     echo
     if [[ "$(uname)" == "Darwin" ]]; then
         echo "   • Sur macOS:"
-        echo "     ${BLUE}whisper_modern_cli audio.mp3 --compute_type int8 --device cpu${RESET}"
+        echo "     ${BLUE}whisperx_cli audio.mp3 --compute_type int8 --device cpu${RESET}"
         echo
     fi
 

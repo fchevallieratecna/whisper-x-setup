@@ -66,17 +66,17 @@ chmod +x setup_modern.sh
 
 ```bash
 # Transcription simple
-whisper_modern_cli audio.mp3 --model large-v3 --language fr
+whisperx_cli audio.mp3 --model large-v3 --language fr
 
 # Avec diarization (identification des locuteurs)
-whisper_modern_cli meeting.wav \
+whisperx_cli meeting.wav \
   --diarize \
   --hf_token YOUR_TOKEN \
   --nb_speaker 3 \
   --output_format srt
 
 # Sur macOS (CPU optimisé)
-whisper_modern_cli audio.mp3 \
+whisperx_cli audio.mp3 \
   --compute_type int8 \
   --device cpu \
   --model large-v3
@@ -86,20 +86,20 @@ whisper_modern_cli audio.mp3 \
 
 ```bash
 # Diarization avec NeMo (plus précis)
-whisper_modern_cli interview.mp3 \
+whisperx_cli interview.mp3 \
   --diarize \
   --diarization_backend nemo \
   --model large-v3 \
   --language fr
 
 # Traitement par batch optimisé
-whisper_modern_cli long_audio.wav \
+whisperx_cli long_audio.wav \
   --batch_size 16 \
   --compute_type float16 \
   --initial_prompt "Cette réunion concerne..."
 
 # Debug et développement
-whisper_modern_cli test.mp3 \
+whisperx_cli test.mp3 \
   --debug \
   --model base \
   --output debug_output.json \
@@ -199,23 +199,23 @@ processing:
 
 ```bash
 # Erreur de mémoire GPU
-whisper_modern_cli audio.mp3 --compute_type int8 --batch_size 4
+whisperx_cli audio.mp3 --compute_type int8 --batch_size 4
 
 # Problème de token Hugging Face
-whisper_modern_cli audio.mp3 --no-diarize
+whisperx_cli audio.mp3 --no-diarize
 
 # Erreur macOS
-whisper_modern_cli audio.mp3 --device cpu --compute_type int8
+whisperx_cli audio.mp3 --device cpu --compute_type int8
 ```
 
 ### Vérification de l'installation
 
 ```bash
 # Version et informations
-whisper_modern_cli --version
+whisperx_cli --version
 
 # Test rapide
-whisper_modern_cli test_audio.wav --model base --debug
+whisperx_cli test_audio.wav --model base --debug
 ```
 
 ## 🌐 API REST
@@ -250,7 +250,7 @@ curl -X POST "http://localhost:3000/api/transcribe" \
 whisperx audio.mp3 --model large-v2 --diarize --language fr
 
 # Nouvelle commande (Modern Setup)
-whisper_modern_cli audio.mp3 --model large-v3 --diarize --language fr
+whisperx_cli audio.mp3 --model large-v3 --diarize --language fr
 ```
 
 ### Avantages de la migration
