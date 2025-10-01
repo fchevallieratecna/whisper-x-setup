@@ -1,5 +1,5 @@
 #!/bin/bash
-# Modern Whisper Setup Script (September 2025)
+# WhisperX Setup Script (September 2025)
 # Utilise whisper-diarization + NeMo 2.0 + PyTorch 2.7.1 + CUDA 12.8
 # Compatible: Ubuntu 20.04+, macOS 12+, CUDA 12.8, Python 3.9-3.12
 
@@ -74,7 +74,7 @@ log_step() {
 
 show_usage() {
     cat << EOF
-${BOLD}Modern Whisper Setup Script v${SCRIPT_VERSION} (September 2025)${RESET}
+${BOLD}WhisperX Setup Script v${SCRIPT_VERSION} (September 2025)${RESET}
 
 Usage: $0 [OPTIONS]
 
@@ -226,7 +226,7 @@ check_cuda_compatibility() {
 create_environment() {
     log_step "Création de l'environnement Python"
 
-    local env_name="whisper_modern_env"
+    local env_name="whisperx_env"
 
     if [[ $USE_CONDA -eq 1 ]]; then
         if ! command -v conda &> /dev/null; then
@@ -346,9 +346,9 @@ install_pytorch() {
         # Définir le chemin de l'environnement
         local env_path
         if [[ $USE_CONDA -eq 1 ]]; then
-            env_path="$(conda info --base)/envs/whisper_modern_env"
+            env_path="$(conda info --base)/envs/whisperx_env"
         else
-            env_path="$(pwd)/whisper_modern_env"
+            env_path="$(pwd)/whisperx_env"
         fi
         
         # Créer le script d'environnement
@@ -488,26 +488,26 @@ install_nemo_dependencies() {
 }
 
 # --- Création du wrapper CLI ---
-create_modern_wrapper() {
-    log_step "Création du wrapper CLI moderne"
+create_cli_wrapper() {
+    log_step "Création du wrapper CLI"
 
     local abs_path
     abs_path="$(pwd)"
-    
+
     # Déterminer le chemin d'activation selon le type d'environnement
     local activation_cmd
     if [[ $USE_CONDA -eq 1 ]]; then
-        activation_cmd="conda activate whisper_modern_env"
+        activation_cmd="conda activate whisperx_env"
     else
-        activation_cmd="source \"${abs_path}/whisper_modern_env/bin/activate\""
+        activation_cmd="source \"${abs_path}/whisperx_env/bin/activate\""
     fi
 
     cat > whisperx_cli << EOF
 #!/bin/bash
-# Modern Whisper CLI Wrapper (September 2025)
+# WhisperX CLI Wrapper
 
 if [[ "\$1" == "--version" ]]; then
-    echo "Modern Whisper CLI v${SCRIPT_VERSION}"
+    echo "WhisperX CLI v${SCRIPT_VERSION}"
     echo "Based on whisper-diarization + NeMo 2.0"
     exit 0
 fi
@@ -515,7 +515,7 @@ fi
 # Activer l'environnement
 ${activation_cmd}
 
-# Lancer le CLI moderne
+# Lancer le CLI
 python "${abs_path}/whisperx_cli.py" "\$@"
 EOF
 
@@ -550,27 +550,28 @@ test_installation() {
     if [[ -f "audio.mp3" ]]; then
         log_step "Test de transcription sur audio.mp3"
 
-        local test_cmd="./whisperx_cli audio.mp3 --model large-v3 --output test_output.txt --output_format txt"
-
+        # Construire la commande de test complète
+        local COMPUTE_TYPE=""
         if [[ "$(uname)" == "Darwin" ]]; then
-            test_cmd+=" --compute_type int8"
+            COMPUTE_TYPE="--compute_type int8"
         fi
 
-        if [[ -n "$HF_TOKEN" ]]; then
-            test_cmd+=" --hf_token '$HF_TOKEN'"
+        # Construire la commande complète
+        if [ -n "$HF_TOKEN" ]; then
+            CMD="./whisperx_cli audio.mp3 --model large-v3 --language fr --hf_token \"$HF_TOKEN\" --diarize --output test_output.srt --output_format srt --nb_speaker 1 $COMPUTE_TYPE"
         else
-            test_cmd+=" --no-diarize"
+            CMD="./whisperx_cli audio.mp3 --model large-v3 --language fr --output test_output.srt --output_format srt --nb_speaker 1 $COMPUTE_TYPE"
         fi
 
         if [[ $VERBOSE -eq 1 ]]; then
-            eval "$test_cmd"
+            eval "$CMD"
         else
-            eval "$test_cmd" > /dev/null 2>&1
+            eval "$CMD" > /dev/null 2>&1
         fi
 
-        if [[ -f "test_output.txt" ]] && [[ -s "test_output.txt" ]]; then
+        if [[ -f "test_output.srt" ]] && [[ -s "test_output.srt" ]]; then
             log_success "Test de transcription réussi"
-            rm -f test_output.txt
+            rm -f test_output.srt
         else
             log_warning "Test de transcription échoué"
         fi
@@ -688,7 +689,7 @@ setup_api() {
     # Lancement avec PM2
     log_step "Lancement de l'API avec PM2"
     local api_port=${API_PORT:-3000}
-    UPLOAD_PATH=/tmp PORT=$api_port pm2 start npm --name "whisper-api-modern" -- start > /dev/null 2>&1
+    UPLOAD_PATH=/tmp PORT=$api_port pm2 start npm --name "whisperx-api" -- start > /dev/null 2>&1
 
     log_success "API lancée sur le port $api_port"
 
@@ -731,10 +732,10 @@ cleanup() {
 
     if [[ $ENV_CREATED -eq 1 ]]; then
         if [[ $USE_CONDA -eq 1 ]]; then
-            conda env remove -n whisper_modern_env -y 2>/dev/null || true
+            conda env remove -n whisperx_env -y 2>/dev/null || true
             log_info "Environnement conda supprimé"
         else
-            rm -rf whisper_modern_env
+            rm -rf whisperx_env
             log_info "Environnement venv supprimé"
         fi
     fi
@@ -758,7 +759,7 @@ show_summary() {
     log_success "=== Installation terminée ===="
     echo
     echo -e "${BOLD}🎯 Commandes disponibles :${RESET}"
-    echo "   • ${BOLD}whisperx_cli${RESET} - CLI moderne avec diarization avancée"
+    echo "   • ${BOLD}whisperx_cli${RESET} - CLI avec diarization avancée"
     echo "   • ${BOLD}whisperx_cli --version${RESET} - Informations sur la version"
     echo
     
@@ -790,7 +791,7 @@ show_summary() {
     fi
     echo "   ✅ Demucs + CTC-forced-aligner"
     echo "   ✅ Support Python 3.9-3.12"
-    echo "   ✅ Interface CLI modernisée"
+    echo "   ✅ Interface CLI améliorée"
     echo "   ✅ Configuration cuDNN automatique pour GPU"
     echo
     
@@ -808,7 +809,7 @@ show_summary() {
 main() {
     trap cleanup SIGINT
 
-    echo -e "${BOLD}🎤 Modern Whisper Setup v${SCRIPT_VERSION} (September 2025)${RESET}"
+    echo -e "${BOLD}🎤 WhisperX Setup v${SCRIPT_VERSION} (September 2025)${RESET}"
     echo -e "${BOLD}Basé sur whisper-diarization + NeMo >=2.4.0 + PyTorch $PYTORCH_VERSION${RESET}"
     echo
 
@@ -830,7 +831,7 @@ main() {
 
     if [[ $ONLY_API -eq 0 ]]; then
         echo
-        log_info "=== Installation du CLI Whisper moderne ==="
+        log_info "=== Installation du CLI WhisperX ==="
 
         # Cloner si nécessaire
         if [[ ! -d "whisper-x-setup" ]]; then
@@ -842,7 +843,7 @@ main() {
 
         cd whisper-x-setup || exit 1
 
-        # Vérifier la présence du CLI moderne
+        # Vérifier la présence du CLI
         if [[ ! -f "whisperx_cli.py" ]]; then
             log_error "Le fichier whisperx_cli.py est introuvable"
             log_info "💡 Vérifiez que le dépôt contient bien whisperx_cli.py"
@@ -854,7 +855,7 @@ main() {
         install_pytorch
         install_whisper_dependencies
         install_nemo_dependencies
-        create_modern_wrapper
+        create_cli_wrapper
         test_installation
 
         log_success "Installation du CLI terminée"
